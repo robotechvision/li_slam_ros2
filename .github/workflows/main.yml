@@ -10,6 +10,7 @@ jobs:
             - name: ROS2 Install
               run: |
                   # Ref: https://index.ros.org/doc/ros2/Installation/Foxy/Linux-Install-Debians/
+                  sudo apt update && sudo apt install locales
                   sudo locale-gen en_US en_US.UTF-8
                   sudo update-locale LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8
                   export LANG=en_US.UTF-8
@@ -28,19 +29,9 @@ jobs:
                   cp -rf . ~/ros2_ws/src/li_slam_ros2
             - name: Install gtsam
               run: |
-                  sudo apt-get install libtbb-dev
-                  mkdir ~/workspace && cd ~/workspace
-                  git clone https://github.com/borglab/gtsam
-                  cd gtsam
-                  mkdir -p build && cd build
-                  cmake \
-                    -DCMAKE_BUILD_TYPE=Release \
-                    -DGTSAM_BUILD_WITH_MARCH_NATIVE=OFF \
-                    -DGTSAM_USE_SYSTEM_EIGEN=ON \
-                    -DGTSAM_BUILD_EXAMPLES_ALWAYS=OFF \
-                    ..
-                  make -j4 check
-                  sudo make install -j4
+                  sudo add-apt-repository ppa:borglab/gtsam-release-4.0
+                  sudo apt update
+                  sudo apt install libgtsam-dev libgtsam-unstable-dev
             - name: Install dependencies
               run: |
                   source /opt/ros/foxy/setup.bash

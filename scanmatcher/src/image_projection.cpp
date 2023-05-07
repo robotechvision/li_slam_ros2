@@ -54,6 +54,21 @@ POINT_CLOUD_REGISTER_POINT_STRUCT(
     ring) (float, time, time)
 )
 
+struct OusterPointXYZIRT {
+    PCL_ADD_POINT4D;
+    float intensity;
+    uint32_t t;
+    uint16_t reflectivity;
+    uint8_t ring;
+    uint16_t noise;
+    uint32_t range;
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+} EIGEN_ALIGN16;
+POINT_CLOUD_REGISTER_POINT_STRUCT(OusterPointXYZIRT,
+    (float, x, x) (float, y, y) (float, z, z) (float, intensity, intensity)
+    (uint32_t, t, t) (uint16_t, reflectivity, reflectivity)
+    (uint8_t, ring, ring) (uint16_t, noise, noise) (uint32_t, range, range)
+)
 
 const int queueLength = 500;
 
@@ -85,6 +100,7 @@ private:
   Eigen::Affine3f transStartInverse;
 
   pcl::PointCloud<PointXYZIRT>::Ptr laserCloudIn;
+  pcl::PointCloud<OusterPointXYZIRT>::Ptr tmpOusterCloudIn;
   pcl::PointCloud<PointType>::Ptr fullCloud;
   pcl::PointCloud<PointType>::Ptr extractedCloud;
 
@@ -99,6 +115,8 @@ private:
   double timeScanCur;
   double timeScanNext;
   std_msgs::msg::Header cloudHeader;
+
+  vector<int> columnIdnCountVec;
 
 public:
   ImageProjection(const rclcpp::NodeOptions & options)
@@ -137,6 +155,7 @@ public:
   void allocateMemory()
   {
     laserCloudIn.reset(new pcl::PointCloud<PointXYZIRT>());
+    tmpOusterCloudIn.reset(new pcl::PointCloud<OusterPointXYZIRT>());
     fullCloud.reset(new pcl::PointCloud<PointType>());
     extractedCloud.reset(new pcl::PointCloud<PointType>());
 
@@ -162,6 +181,7 @@ public:
       imuRotY[i] = 0;
       imuRotZ[i] = 0;
     }
+    columnIdnCountVec.assign(N_SCAN, 0);
   }
 
   ~ImageProjection() {}
@@ -223,20 +243,44 @@ public:
 
     if (cloudQueue.size() <= 2) {
       return false;
-    } else {
-      currentCloudMsg = cloudQueue.front();
-      cloudQueue.pop_front();
-
-      cloudHeader = currentCloudMsg.header;
-      // timeScanCur = cloudHeader.stamp.toSec();
-      timeScanCur = cloudHeader.stamp.sec + cloudHeader.stamp.nanosec * 1e-9;
-      // timeScanNext = cloudQueue.front().header.stamp.toSec();
-      timeScanNext = cloudQueue.front().header.stamp.sec + cloudQueue.front().header.stamp.nanosec *
-        1e-9;
     }
 
-    // convert cloud
-    pcl::fromROSMsg(currentCloudMsg, *laserCloudIn);
+      // convert cloud
+      currentCloudMsg = std::move(cloudQueue.front());
+      cloudQueue.pop_front();
+      if (sensor == SensorType::VELODYNE || sensor == SensorType::LIVOX)
+      {
+          pcl::moveFromROSMsg(currentCloudMsg, *laserCloudIn);
+      }
+      else if (sensor == SensorType::OUSTER)
+      {
+          // Convert to Velodyne format
+          pcl::moveFromROSMsg(currentCloudMsg, *tmpOusterCloudIn);
+          laserCloudIn->points.resize(tmpOusterCloudIn->size());
+          laserCloudIn->is_dense = tmpOusterCloudIn->is_dense;
+          for (size_t i = 0; i < tmpOusterCloudIn->size(); i++)
+          {
+              auto &src = tmpOusterCloudIn->points[i];
+              auto &dst = laserCloudIn->points[i];
+              dst.x = src.x;
+              dst.y = src.y;
+              dst.z = src.z;
+              dst.intensity = src.intensity;
+              dst.ring = src.ring;
+              dst.time = src.t * 1e-9f;
+          }
+      }
+      else
+      {
+          RCLCPP_ERROR_STREAM(get_logger(), "Unknown sensor type: " << int(sensor));
+          rclcpp::shutdown();
+      }
+
+      // get timestamp
+      cloudHeader = currentCloudMsg.header;
+      timeScanCur = cloudHeader.stamp.sec + cloudHeader.stamp.nanosec * 1e-9;
+      timeScanNext = timeScanCur + laserCloudIn->points.back().time;
+
 
     // check dense flag
     if (laserCloudIn->is_dense == false) {
@@ -557,41 +601,45 @@ public:
       thisPoint.z = laserCloudIn->points[i].z;
       thisPoint.intensity = laserCloudIn->points[i].intensity;
 
-      int rowIdn = laserCloudIn->points[i].ring;
+      float range = pointDistance(thisPoint);
+      if (range < 1.0) {
+        continue;
+      }
 
+      int rowIdn = laserCloudIn->points[i].ring;
       if (rowIdn < 0 || rowIdn >= N_SCAN) {
         continue;
       }
 
-      float horizonAngle = atan2(thisPoint.x, thisPoint.y) * 180 / M_PI;
+      int columnIdn = -1;
+      if (sensor == SensorType::VELODYNE || sensor == SensorType::OUSTER)
+      {
+        float horizonAngle = atan2(thisPoint.x, thisPoint.y) * 180 / M_PI;
 
-      float ang_res_x = 360.0 / float(Horizon_SCAN);
-      int columnIdn = -round((horizonAngle - 90.0) / ang_res_x) + Horizon_SCAN / 2;
-      if (columnIdn >= Horizon_SCAN) {
-        columnIdn -= Horizon_SCAN;
+        float ang_res_x = 360.0 / float(Horizon_SCAN);
+        columnIdn = -round((horizonAngle - 90.0) / ang_res_x) + Horizon_SCAN / 2;
+
+        if (columnIdn >= Horizon_SCAN) {
+          columnIdn -= Horizon_SCAN;
+        }
+      }
+      else if (sensor == SensorType::LIVOX)
+      {
+          columnIdn = columnIdnCountVec[rowIdn];
+          columnIdnCountVec[rowIdn] += 1;
       }
 
       if (columnIdn < 0 || columnIdn >= Horizon_SCAN) {
         continue;
       }
 
-      float range = pointDistance(thisPoint);
-
-      if (range < 1.0) {
+      if (rangeMat.at<float>(rowIdn, columnIdn) != FLT_MAX) {
         continue;
       }
 
-      if (rangeMat.at<float>(rowIdn, columnIdn) != FLT_MAX) {continue;}
-
-      // for the amsterdam dataset
-      // if (range < 6.0 && rowIdn <= 7 && (columnIdn >= 1600 || columnIdn <= 200))
-      //     continue;
-      // if (thisPoint.z < -2.0)
-      //     continue;
+      thisPoint = deskewPoint(&thisPoint, laserCloudIn->points[i].time);
 
       rangeMat.at<float>(rowIdn, columnIdn) = range;
-
-      thisPoint = deskewPoint(&thisPoint, laserCloudIn->points[i].time);
 
       int index = columnIdn + rowIdn * Horizon_SCAN;
       fullCloud->points[index] = thisPoint;

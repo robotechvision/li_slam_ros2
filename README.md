@@ -40,24 +40,14 @@ git clone --recursive https://github.com/rsasaki0109/li_slam_ros2
 ```
 gtsam install
 ```
-sudo apt-get install libtbb-dev
-mkdir ~/workspace && cd ~/workspace
-git clone https://github.com/borglab/gtsam
-cd gtsam
-mkdir -p build && cd build
-cmake \
-  -DCMAKE_BUILD_TYPE=Release \
-  -DGTSAM_BUILD_WITH_MARCH_NATIVE=OFF \
-  -DGTSAM_USE_SYSTEM_EIGEN=ON \
-  -DGTSAM_BUILD_EXAMPLES_ALWAYS=OFF \
-  ..
-make -j4 check
-sudo make install -j4
+sudo add-apt-repository ppa:borglab/gtsam-release-4.0
+sudo apt update
+sudo apt install libgtsam-dev libgtsam-unstable-dev
 ```
 build
 ```
 cd ~/ros2_ws
-colcon build
+colcon build --cmake-args -DCMAKE_BUILD_TYPE=Release
 ```
 
 
@@ -82,7 +72,7 @@ ros2 launch scanmatcher lio.launch.py
 ```
 
 ```
-ros2 bag play -s rosbag_v2 casual_walk.bag 
+ros2 bag play -s rosbag_v2 walking_dataset.bag 
 ```
 
 <img src="./scanmatcher/images/li_slam.gif">
