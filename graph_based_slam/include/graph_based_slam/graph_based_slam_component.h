@@ -40,6 +40,7 @@ extern "C" {
 #endif
 
 #include <rclcpp/rclcpp.hpp>
+#include <rclcpp_lifecycle/lifecycle_node.hpp>
 
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_listener.h>
@@ -89,32 +90,39 @@ extern "C" {
 
 namespace graphslam
 {
-  class GraphBasedSlamComponent: public rclcpp::Node
+  class GraphBasedSlamComponent: public rclcpp_lifecycle::LifecycleNode
   {
+    typedef rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn LifecycleCallbackReturn;
 public:
     GS_GBS_PUBLIC
     explicit GraphBasedSlamComponent(const rclcpp::NodeOptions & options);
 
+    LifecycleCallbackReturn on_configure(const rclcpp_lifecycle::State &) override;
+    LifecycleCallbackReturn on_activate(const rclcpp_lifecycle::State &) override;
+    LifecycleCallbackReturn on_deactivate(const rclcpp_lifecycle::State &) override;
+    LifecycleCallbackReturn on_cleanup(const rclcpp_lifecycle::State &) override;
+
 private:
     std::mutex mtx_;
 
-    rclcpp::Clock clock_;
-    tf2_ros::Buffer tfbuffer_;
-    tf2_ros::TransformListener listener_;
-    tf2_ros::TransformBroadcaster broadcaster_;
+    // rclcpp::Clock clock_;
+    tf2_ros::Buffer::SharedPtr tfbuffer_;
+    std::shared_ptr<tf2_ros::TransformListener> listener_;
+    std::shared_ptr<tf2_ros::TransformBroadcaster> broadcaster_;
 
     boost::shared_ptr<pcl::Registration < pcl::PointXYZI, pcl::PointXYZI >> registration_;
     pcl::VoxelGrid < pcl::PointXYZI > voxelgrid_;
 
     lidarslam_msgs::msg::MapArray map_array_msg_;
     rclcpp::Subscription < lidarslam_msgs::msg::MapArray > ::SharedPtr map_array_sub_;
-    rclcpp::Publisher < lidarslam_msgs::msg::MapArray > ::SharedPtr modified_map_array_pub_;
-    rclcpp::Publisher < nav_msgs::msg::Path > ::SharedPtr modified_path_pub_;
-    rclcpp::Publisher < sensor_msgs::msg::PointCloud2 > ::SharedPtr modified_map_pub_;
+    rclcpp_lifecycle::LifecyclePublisher < lidarslam_msgs::msg::MapArray > ::SharedPtr modified_map_array_pub_;
+    rclcpp_lifecycle::LifecyclePublisher < nav_msgs::msg::Path > ::SharedPtr modified_path_pub_;
+    rclcpp_lifecycle::LifecyclePublisher < sensor_msgs::msg::PointCloud2 > ::SharedPtr modified_map_pub_;
     rclcpp::TimerBase::SharedPtr loop_detect_timer_;
     rclcpp::Service < std_srvs::srv::Empty > ::SharedPtr map_save_srv_;
 
-    void initializePubSub();
+    void initializePub();
+    void initializeSub();
     void searchLoop();
     void doPoseAdjustment(lidarslam_msgs::msg::MapArray map_array_msg, bool do_save_map);
     void publishMapAndPose();

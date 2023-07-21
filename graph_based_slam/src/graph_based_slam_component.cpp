@@ -1,44 +1,52 @@
 #include "graph_based_slam/graph_based_slam_component.h"
 #include <chrono>
+#include "tf2_ros/create_timer_ros.h"
 
 using namespace std::chrono_literals;
 
 namespace graphslam
 {
 GraphBasedSlamComponent::GraphBasedSlamComponent(const rclcpp::NodeOptions & options)
-: Node("graph_based_slam", options),
-  clock_(RCL_ROS_TIME),
-  tfbuffer_(std::make_shared<rclcpp::Clock>(clock_)),
-  listener_(tfbuffer_),
-  broadcaster_(this)
+: rclcpp_lifecycle::LifecycleNode("graph_based_slam", options)
 {
   RCLCPP_INFO(get_logger(), "initialization start");
+
+  declare_parameter("registration_method", "NDT");
+  declare_parameter("voxel_leaf_size", 0.2);
+  declare_parameter("ndt_resolution", 5.0);
+  declare_parameter("ndt_num_threads", 0);
+  declare_parameter("loop_detection_period", 1000);
+  declare_parameter("threshold_loop_closure_score", 1.0);
+  declare_parameter("distance_loop_closure", 20.0);
+  declare_parameter("range_of_searching_loop_closure", 20.0);
+  declare_parameter("search_submap_num", 3);
+  declare_parameter("num_adjacent_pose_cnstraints", 5);
+  declare_parameter("use_save_map_in_loop", true);
+}
+
+GraphBasedSlamComponent::LifecycleCallbackReturn GraphBasedSlamComponent::on_configure(const rclcpp_lifecycle::State &) {
+  tfbuffer_ = std::make_shared<tf2_ros::Buffer>(get_clock());
+  auto timer_interface = std::make_shared<tf2_ros::CreateTimerROS>(
+      get_node_base_interface(), get_node_timers_interface());
+  tfbuffer_->setCreateTimerInterface(timer_interface);
+  listener_ = std::make_shared<tf2_ros::TransformListener>(*tfbuffer_);
+  broadcaster_ = std::make_shared<tf2_ros::TransformBroadcaster>(this);
+
   std::string registration_method;
   double voxel_leaf_size;
   double ndt_resolution;
   int ndt_num_threads;
 
-  declare_parameter("registration_method", "NDT");
   get_parameter("registration_method", registration_method);
-  declare_parameter("voxel_leaf_size", 0.2);
   get_parameter("voxel_leaf_size", voxel_leaf_size);
-  declare_parameter("ndt_resolution", 5.0);
   get_parameter("ndt_resolution", ndt_resolution);
-  declare_parameter("ndt_num_threads", 0);
   get_parameter("ndt_num_threads", ndt_num_threads);
-  declare_parameter("loop_detection_period", 1000);
   get_parameter("loop_detection_period", loop_detection_period_);
-  declare_parameter("threshold_loop_closure_score", 1.0);
   get_parameter("threshold_loop_closure_score", threshold_loop_closure_score_);
-  declare_parameter("distance_loop_closure", 20.0);
   get_parameter("distance_loop_closure", distance_loop_closure_);
-  declare_parameter("range_of_searching_loop_closure", 20.0);
   get_parameter("range_of_searching_loop_closure", range_of_searching_loop_closure_);
-  declare_parameter("search_submap_num", 3);
   get_parameter("search_submap_num", search_submap_num_);
-  declare_parameter("num_adjacent_pose_cnstraints", 5);
   get_parameter("num_adjacent_pose_cnstraints", num_adjacent_pose_cnstraints_);
-  declare_parameter("use_save_map_in_loop", true);
   get_parameter("use_save_map_in_loop", use_save_map_in_loop_);
 
   std::cout << "registration_method:" << registration_method << std::endl;
@@ -79,7 +87,7 @@ GraphBasedSlamComponent::GraphBasedSlamComponent(const rclcpp::NodeOptions & opt
     registration_ = gicp;
   }
 
-  initializePubSub();
+  initializePub();
 
   auto map_save_callback =
     [this](const std::shared_ptr<rmw_request_id_t> request_header,
@@ -96,11 +104,62 @@ GraphBasedSlamComponent::GraphBasedSlamComponent(const rclcpp::NodeOptions & opt
 
   map_save_srv_ = create_service<std_srvs::srv::Empty>("map_save", map_save_callback);
 
+  return LifecycleCallbackReturn::SUCCESS;
 }
 
-void GraphBasedSlamComponent::initializePubSub()
+GraphBasedSlamComponent::LifecycleCallbackReturn GraphBasedSlamComponent::on_activate(const rclcpp_lifecycle::State &) {
+  initializeSub();
+
+  modified_map_pub_->on_activate();
+  modified_map_array_pub_->on_activate();
+  modified_path_pub_->on_activate();
+
+  return LifecycleCallbackReturn::SUCCESS;
+}
+GraphBasedSlamComponent::LifecycleCallbackReturn GraphBasedSlamComponent::on_deactivate(const rclcpp_lifecycle::State &) {
+  map_array_sub_.reset();
+  loop_detect_timer_.reset();
+
+  modified_map_pub_->on_deactivate();
+  modified_map_array_pub_->on_deactivate();
+  modified_path_pub_->on_deactivate();
+
+  return LifecycleCallbackReturn::SUCCESS;
+}
+GraphBasedSlamComponent::LifecycleCallbackReturn GraphBasedSlamComponent::on_cleanup(const rclcpp_lifecycle::State &) {
+  modified_map_array_pub_.reset();
+  modified_map_array_pub_.reset();
+  modified_path_pub_.reset();
+  map_save_srv_.reset();
+
+  broadcaster_.reset();
+  listener_.reset();
+  tfbuffer_.reset();
+  return LifecycleCallbackReturn::SUCCESS;
+}
+
+void GraphBasedSlamComponent::initializePub()
 {
-  RCLCPP_INFO(get_logger(), "initialize Publishers and Subscribers");
+  RCLCPP_INFO(get_logger(), "initialize Publishers");
+
+  modified_map_pub_ = create_publisher<sensor_msgs::msg::PointCloud2>(
+    "modified_map",
+    rclcpp::QoS(10));
+
+  modified_map_array_pub_ = create_publisher<lidarslam_msgs::msg::MapArray>(
+    "modified_map_array", rclcpp::QoS(10));
+
+  modified_path_pub_ = create_publisher<nav_msgs::msg::Path>(
+    "modified_path",
+    rclcpp::QoS(10));
+
+  RCLCPP_INFO(get_logger(), "initialization end");
+
+}
+
+void GraphBasedSlamComponent::initializeSub()
+{
+  RCLCPP_INFO(get_logger(), "initialize Subscribers");
 
   auto map_array_callback =
     [this](const typename lidarslam_msgs::msg::MapArray::SharedPtr msg_ptr) -> void
@@ -121,19 +180,7 @@ void GraphBasedSlamComponent::initializePubSub()
     std::bind(&GraphBasedSlamComponent::searchLoop, this)
   );
 
-  modified_map_pub_ = create_publisher<sensor_msgs::msg::PointCloud2>(
-    "modified_map",
-    rclcpp::QoS(10));
-
-  modified_map_array_pub_ = create_publisher<lidarslam_msgs::msg::MapArray>(
-    "modified_map_array", rclcpp::QoS(10));
-
-  modified_path_pub_ = create_publisher<nav_msgs::msg::Path>(
-    "modified_path",
-    rclcpp::QoS(10));
-
   RCLCPP_INFO(get_logger(), "initialization end");
-
 }
 
 void GraphBasedSlamComponent::searchLoop()

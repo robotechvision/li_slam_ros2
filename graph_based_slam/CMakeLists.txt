@@ -23,6 +23,7 @@ add_compile_definitions(G2O_USE_VENDORED_CERES)
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(rclcpp_components REQUIRED)
+find_package(rclcpp_lifecycle REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
@@ -62,6 +63,7 @@ target_compile_definitions(graph_based_slam_component PRIVATE "GS_GBS_BUILDING_D
 ament_target_dependencies(graph_based_slam_component
   rclcpp
   rclcpp_components
+  rclcpp_lifecycle
   tf2_ros
   tf2_eigen
   tf2_geometry_msgs

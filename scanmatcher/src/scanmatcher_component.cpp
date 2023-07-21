@@ -1,80 +1,89 @@
 #include "scanmatcher/scanmatcher_component.h"
 
 #include <chrono>
+#include "tf2_ros/create_timer_ros.h"
 
 using namespace std::chrono_literals;
 
 namespace graphslam
 {
 ScanMatcherComponent::ScanMatcherComponent(const rclcpp::NodeOptions & options)
-: Node("scan_matcher", options),
-  clock_(RCL_ROS_TIME),
-  tfbuffer_(std::make_shared<rclcpp::Clock>(clock_)),
-  listener_(tfbuffer_),
-  broadcaster_(this)
+: rclcpp_lifecycle::LifecycleNode("scan_matcher", options)
 {
+  declare_parameter("global_frame_id", "map");
+  declare_parameter("robot_frame_id", "base_link");
+  declare_parameter("odom_frame_id", "odom");
+  declare_parameter("registration_method", "NDT");
+  declare_parameter("ndt_resolution", 5.0);
+  declare_parameter("ndt_num_threads", 0);
+  declare_parameter("gicp_corr_dist_threshold", 5.0);
+  declare_parameter("trans_for_mapupdate", 1.5);
+  declare_parameter("vg_size_for_input", 0.2);
+  declare_parameter("vg_size_for_map", 0.1);
+  declare_parameter("use_min_max_filter", false);
+  declare_parameter("scan_min_range", 0.1);
+  declare_parameter("scan_max_range", 100.0);
+  declare_parameter("map_publish_period", 15.0);
+  declare_parameter("num_targeted_cloud", 10);
+
+  declare_parameter("initial_pose_x", 0.0);
+  declare_parameter("initial_pose_y", 0.0);
+  declare_parameter("initial_pose_z", 0.0);
+  declare_parameter("initial_pose_qx", 0.0);
+  declare_parameter("initial_pose_qy", 0.0);
+  declare_parameter("initial_pose_qz", 0.0);
+  declare_parameter("initial_pose_qw", 1.0);
+
+  declare_parameter("set_initial_pose", false);
+  declare_parameter("use_odom", false);
+  declare_parameter("use_imu", false);
+  declare_parameter("debug_flag", false);
+}
+
+ScanMatcherComponent::LifecycleCallbackReturn ScanMatcherComponent::on_configure(const rclcpp_lifecycle::State &) {
+  tfbuffer_ = std::make_shared<tf2_ros::Buffer>(get_clock());
+  auto timer_interface = std::make_shared<tf2_ros::CreateTimerROS>(
+      get_node_base_interface(), get_node_timers_interface());
+  tfbuffer_->setCreateTimerInterface(timer_interface);
+  listener_ = std::make_shared<tf2_ros::TransformListener>(*tfbuffer_);
+  broadcaster_ = std::make_shared<tf2_ros::TransformBroadcaster>(this);
+
   std::string registration_method;
   double ndt_resolution;
   int ndt_num_threads;
   double gicp_corr_dist_threshold;
 
-  declare_parameter("global_frame_id", "map");
   get_parameter("global_frame_id", global_frame_id_);
-  declare_parameter("robot_frame_id", "base_link");
   get_parameter("robot_frame_id", robot_frame_id_);
-  declare_parameter("odom_frame_id", "odom");
   get_parameter("odom_frame_id", odom_frame_id_);
-  declare_parameter("registration_method", "NDT");
   get_parameter("registration_method", registration_method);
-  declare_parameter("ndt_resolution", 5.0);
   get_parameter("ndt_resolution", ndt_resolution);
-  declare_parameter("ndt_num_threads", 0);
   get_parameter("ndt_num_threads", ndt_num_threads);
-  declare_parameter("gicp_corr_dist_threshold", 5.0);
   get_parameter("gicp_corr_dist_threshold", gicp_corr_dist_threshold);
-  declare_parameter("trans_for_mapupdate", 1.5);
   get_parameter("trans_for_mapupdate", trans_for_mapupdate_);
-  declare_parameter("vg_size_for_input", 0.2);
   get_parameter("vg_size_for_input", vg_size_for_input_);
-  declare_parameter("vg_size_for_map", 0.1);
   get_parameter("vg_size_for_map", vg_size_for_map_);
-  declare_parameter("use_min_max_filter", false);
   get_parameter("use_min_max_filter", use_min_max_filter_);
-  declare_parameter("scan_min_range", 0.1);
   get_parameter("scan_min_range", scan_min_range_);
-  declare_parameter("scan_max_range", 100.0);
   get_parameter("scan_max_range", scan_max_range_);
-  declare_parameter("map_publish_period", 15.0);
   get_parameter("map_publish_period", map_publish_period_);
-  declare_parameter("num_targeted_cloud", 10);
   get_parameter("num_targeted_cloud", num_targeted_cloud_);
   if (num_targeted_cloud_ < 1) {
     std::cout << "num_tareged_cloud should be positive" << std::endl;
     num_targeted_cloud_ = 1;
   }
 
-  declare_parameter("initial_pose_x", 0.0);
   get_parameter("initial_pose_x", initial_pose_x_);
-  declare_parameter("initial_pose_y", 0.0);
   get_parameter("initial_pose_y", initial_pose_y_);
-  declare_parameter("initial_pose_z", 0.0);
   get_parameter("initial_pose_z", initial_pose_z_);
-  declare_parameter("initial_pose_qx", 0.0);
   get_parameter("initial_pose_qx", initial_pose_qx_);
-  declare_parameter("initial_pose_qy", 0.0);
   get_parameter("initial_pose_qy", initial_pose_qy_);
-  declare_parameter("initial_pose_qz", 0.0);
   get_parameter("initial_pose_qz", initial_pose_qz_);
-  declare_parameter("initial_pose_qw", 1.0);
   get_parameter("initial_pose_qw", initial_pose_qw_);
 
-  declare_parameter("set_initial_pose", false);
   get_parameter("set_initial_pose", set_initial_pose_);
-  declare_parameter("use_odom", false);
   get_parameter("use_odom", use_odom_);
-  declare_parameter("use_imu", false);
   get_parameter("use_imu", use_imu_);
-  declare_parameter("debug_flag", false);
   get_parameter("debug_flag", debug_flag_);
 
   std::cout << "registration_method:" << registration_method << std::endl;
@@ -121,7 +130,7 @@ ScanMatcherComponent::ScanMatcherComponent(const rclcpp::NodeOptions & options)
 
   path_.header.frame_id = global_frame_id_;
 
-  initializePubSub();
+  initializePub();
 
   if (set_initial_pose_) {
     auto msg = std::make_shared<geometry_msgs::msg::PoseStamped>();
@@ -142,11 +151,76 @@ ScanMatcherComponent::ScanMatcherComponent(const rclcpp::NodeOptions & options)
   }
 
   RCLCPP_INFO(get_logger(), "initialization end");
+
+  return LifecycleCallbackReturn::SUCCESS;
 }
 
-void ScanMatcherComponent::initializePubSub()
+ScanMatcherComponent::LifecycleCallbackReturn ScanMatcherComponent::on_activate(const rclcpp_lifecycle::State &) {
+  initializeSub();
+
+  pose_pub_->on_activate();
+  map_pub_->on_activate();
+  map_array_pub_->on_activate();
+  path_pub_->on_activate();
+  odom_pub_->on_activate();
+  return LifecycleCallbackReturn::SUCCESS;
+}
+ScanMatcherComponent::LifecycleCallbackReturn ScanMatcherComponent::on_deactivate(const rclcpp_lifecycle::State &) {
+  initial_pose_sub_.reset();
+  odom_sub_.reset();
+  input_cloud_sub_.reset();
+
+  pose_pub_->on_deactivate();
+  map_pub_->on_deactivate();
+  map_array_pub_->on_deactivate();
+  path_pub_->on_deactivate();
+  odom_pub_->on_deactivate();
+
+  return LifecycleCallbackReturn::SUCCESS;
+}
+ScanMatcherComponent::LifecycleCallbackReturn ScanMatcherComponent::on_cleanup(const rclcpp_lifecycle::State &) {
+  initial_pose_received_ = false;
+  initial_cloud_received_ = false;
+
+  pose_pub_.reset();
+  map_pub_.reset();
+  map_array_pub_.reset();
+  path_pub_.reset();
+  odom_pub_.reset();
+
+  broadcaster_.reset();
+  listener_.reset();
+  tfbuffer_.reset();
+  return LifecycleCallbackReturn::SUCCESS;
+}
+
+void ScanMatcherComponent::initializePub()
 {
-  RCLCPP_INFO(get_logger(), "initialize Publishers and Subscribers");
+  RCLCPP_INFO(get_logger(), "initialize Publishers");
+
+  // pub
+  pose_pub_ = create_publisher<geometry_msgs::msg::PoseStamped>(
+      "current_pose",
+      rclcpp::QoS(rclcpp::KeepLast(1)).reliable());
+  map_pub_ = create_publisher<sensor_msgs::msg::PointCloud2>(
+      "map", rclcpp::QoS(
+          rclcpp::KeepLast(
+              1)).reliable());
+  map_array_pub_ =
+      create_publisher<lidarslam_msgs::msg::MapArray>(
+          "map_array", rclcpp::QoS(
+              rclcpp::KeepLast(
+                  1)).reliable());
+  path_pub_ = create_publisher<nav_msgs::msg::Path>("path", 1);
+  odom_pub_ = create_publisher<nav_msgs::msg::Odometry>(
+      "odom", rclcpp::QoS(
+          rclcpp::KeepLast(
+              1)).reliable());
+}
+
+void ScanMatcherComponent::initializeSub()
+{
+  RCLCPP_INFO(get_logger(), "initialize Subscribers");
   // sub
   auto initial_pose_callback =
     [this](const typename geometry_msgs::msg::PoseStamped::SharedPtr msg) -> void
@@ -175,7 +249,7 @@ void ScanMatcherComponent::initializePubSub()
           tf2::TimePoint time_point = tf2::TimePoint(
             std::chrono::seconds(msg->header.stamp.sec) +
             std::chrono::nanoseconds(msg->header.stamp.nanosec));
-          const geometry_msgs::msg::TransformStamped transform = tfbuffer_.lookupTransform(
+          const geometry_msgs::msg::TransformStamped transform = tfbuffer_->lookupTransform(
             robot_frame_id_, msg->header.frame_id, time_point);
           tf2::doTransform(*msg, transformed_msg, transform); // TODO:slow now(https://github.com/ros/geometry2/pull/432)
         } catch (tf2::TransformException & e) {
@@ -229,7 +303,7 @@ void ScanMatcherComponent::initializePubSub()
 
           map_pub_->publish(submap.cloud);
 
-          last_map_time_ = clock_.now();
+          last_map_time_ = now();
 
         }
 
@@ -257,25 +331,6 @@ void ScanMatcherComponent::initializePubSub()
   input_cloud_sub_ =
     create_subscription<sensor_msgs::msg::PointCloud2>(
     "input_cloud", rclcpp::SensorDataQoS(), cloud_callback);
-
-  // pub
-  pose_pub_ = create_publisher<geometry_msgs::msg::PoseStamped>(
-    "current_pose",
-    rclcpp::QoS(rclcpp::KeepLast(1)).reliable());
-  map_pub_ = create_publisher<sensor_msgs::msg::PointCloud2>(
-    "map", rclcpp::QoS(
-      rclcpp::KeepLast(
-        1)).reliable());
-  map_array_pub_ =
-    create_publisher<lidarslam_msgs::msg::MapArray>(
-    "map_array", rclcpp::QoS(
-      rclcpp::KeepLast(
-        1)).reliable());
-  path_pub_ = create_publisher<nav_msgs::msg::Path>("path", 1);
-  odom_pub_ = create_publisher<nav_msgs::msg::Odometry>(
-    "odom", rclcpp::QoS(
-      rclcpp::KeepLast(
-        1)).reliable());
 }
 
 void ScanMatcherComponent::receiveCloud(
@@ -308,7 +363,7 @@ void ScanMatcherComponent::receiveCloud(
   if (use_odom_) {
     geometry_msgs::msg::TransformStamped odom_trans;
     try {
-      odom_trans = tfbuffer_.lookupTransform(
+      odom_trans = tfbuffer_->lookupTransform(
         odom_frame_id_, robot_frame_id_, tf2_ros::fromMsg(
           stamp));
     } catch (tf2::TransformException & e) {
@@ -392,7 +447,7 @@ void ScanMatcherComponent::publishMapAndPose(
   transform_stamped.transform.translation.y = position.y();
   transform_stamped.transform.translation.z = position.z();
   transform_stamped.transform.rotation = quat_msg;
-  broadcaster_.sendTransform(transform_stamped);
+  broadcaster_->sendTransform(transform_stamped);
 
   corrent_pose_stamped_.header.stamp = stamp;
   corrent_pose_stamped_.pose.position.x = position.x();
@@ -473,7 +528,7 @@ void ScanMatcherComponent::updateMap(
 
   is_map_updated_ = true;
 
-  rclcpp::Time map_time = clock_.now();
+  rclcpp::Time map_time = now();
   double dt = map_time.seconds() - last_map_time_.seconds();
   if (dt > map_publish_period_) {
     publishMap();

@@ -40,6 +40,7 @@ extern "C" {
 #endif
 
 #include <rclcpp/rclcpp.hpp>
+#include <rclcpp_lifecycle/lifecycle_node.hpp>
 
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_listener.h>
@@ -81,17 +82,22 @@ using PointType = pcl::PointXYZI;
 namespace graphslam
 {
   //class ScanMatcherComponent : public ParamServer
-  class ScanMatcherComponent: public rclcpp::Node
+  class ScanMatcherComponent: public rclcpp_lifecycle::LifecycleNode
   {
+    typedef rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn LifecycleCallbackReturn;
 public:
     GS_SM_PUBLIC
     explicit ScanMatcherComponent(const rclcpp::NodeOptions & options);
 
+    LifecycleCallbackReturn on_configure(const rclcpp_lifecycle::State &) override;
+    LifecycleCallbackReturn on_activate(const rclcpp_lifecycle::State &) override;
+    LifecycleCallbackReturn on_deactivate(const rclcpp_lifecycle::State &) override;
+    LifecycleCallbackReturn on_cleanup(const rclcpp_lifecycle::State &) override;
+
 private:
-    rclcpp::Clock clock_;
-    tf2_ros::Buffer tfbuffer_;
-    tf2_ros::TransformListener listener_;
-    tf2_ros::TransformBroadcaster broadcaster_;
+    tf2_ros::Buffer::SharedPtr tfbuffer_;
+    std::shared_ptr<tf2_ros::TransformListener> listener_;
+    std::shared_ptr<tf2_ros::TransformBroadcaster> broadcaster_;
 
     std::string global_frame_id_;
     std::string robot_frame_id_;
@@ -101,7 +107,6 @@ private:
     boost::shared_ptr<pcl::Registration < PointType, PointType >> registration_;
 
     rclcpp::Subscription < geometry_msgs::msg::PoseStamped > ::SharedPtr initial_pose_sub_;
-    rclcpp::Subscription < sensor_msgs::msg::Imu > ::SharedPtr imu_sub_;
     rclcpp::Subscription < nav_msgs::msg::Odometry > ::SharedPtr odom_sub_;
     rclcpp::Subscription < sensor_msgs::msg::PointCloud2 > ::SharedPtr input_cloud_sub_;
 
@@ -117,13 +122,14 @@ private:
     geometry_msgs::msg::PoseStamped corrent_pose_stamped_;
     lidarslam_msgs::msg::MapArray map_array_msg_;
     nav_msgs::msg::Path path_;
-    rclcpp::Publisher < geometry_msgs::msg::PoseStamped > ::SharedPtr pose_pub_;
-    rclcpp::Publisher < sensor_msgs::msg::PointCloud2 > ::SharedPtr map_pub_;
-    rclcpp::Publisher < lidarslam_msgs::msg::MapArray > ::SharedPtr map_array_pub_;
-    rclcpp::Publisher < nav_msgs::msg::Path > ::SharedPtr path_pub_;
-    rclcpp::Publisher < nav_msgs::msg::Odometry > ::SharedPtr odom_pub_;
+    rclcpp_lifecycle::LifecyclePublisher < geometry_msgs::msg::PoseStamped > ::SharedPtr pose_pub_;
+    rclcpp_lifecycle::LifecyclePublisher < sensor_msgs::msg::PointCloud2 > ::SharedPtr map_pub_;
+    rclcpp_lifecycle::LifecyclePublisher < lidarslam_msgs::msg::MapArray > ::SharedPtr map_array_pub_;
+    rclcpp_lifecycle::LifecyclePublisher < nav_msgs::msg::Path > ::SharedPtr path_pub_;
+    rclcpp_lifecycle::LifecyclePublisher < nav_msgs::msg::Odometry > ::SharedPtr odom_pub_;
 
-    void initializePubSub();
+    void initializePub();
+    void initializeSub();
     void receiveCloud(
       const pcl::PointCloud < PointType > ::ConstPtr & input_cloud_ptr,
       const rclcpp::Time stamp);
