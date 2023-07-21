@@ -250,7 +250,7 @@ void ScanMatcherComponent::initializeSub()
             std::chrono::seconds(msg->header.stamp.sec) +
             std::chrono::nanoseconds(msg->header.stamp.nanosec));
           const geometry_msgs::msg::TransformStamped transform = tfbuffer_->lookupTransform(
-            robot_frame_id_, msg->header.frame_id, time_point);
+            robot_frame_id_, msg->header.frame_id, time_point, tf2::durationFromSec(0.3));
           tf2::doTransform(*msg, transformed_msg, transform); // TODO:slow now(https://github.com/ros/geometry2/pull/432)
         } catch (tf2::TransformException & e) {
           RCLCPP_ERROR(this->get_logger(), "%s", e.what());
@@ -365,7 +365,7 @@ void ScanMatcherComponent::receiveCloud(
     try {
       odom_trans = tfbuffer_->lookupTransform(
         odom_frame_id_, robot_frame_id_, tf2_ros::fromMsg(
-          stamp));
+          stamp), tf2::durationFromSec(0.3));
     } catch (tf2::TransformException & e) {
       RCLCPP_ERROR(this->get_logger(), "%s", e.what());
     }
@@ -439,14 +439,21 @@ void ScanMatcherComponent::publishMapAndPose(
   Eigen::Quaterniond quat_eig(rot_mat);
   geometry_msgs::msg::Quaternion quat_msg = tf2::toMsg(quat_eig);
 
+  const Eigen::Matrix4f final_transformation_inv = final_transformation.inverse();
+  Eigen::Vector3d position_inv = final_transformation_inv.block<3, 1>(0, 3).cast<double>();
+
+  Eigen::Matrix3d rot_mat_inv = final_transformation_inv.block<3, 3>(0, 0).cast<double>();
+  Eigen::Quaterniond quat_eig_inv(rot_mat_inv);
+  geometry_msgs::msg::Quaternion quat_msg_inv = tf2::toMsg(quat_eig_inv);
+
   geometry_msgs::msg::TransformStamped transform_stamped;
   transform_stamped.header.stamp = stamp;
-  transform_stamped.header.frame_id = global_frame_id_;
-  transform_stamped.child_frame_id = robot_frame_id_;
-  transform_stamped.transform.translation.x = position.x();
-  transform_stamped.transform.translation.y = position.y();
-  transform_stamped.transform.translation.z = position.z();
-  transform_stamped.transform.rotation = quat_msg;
+  transform_stamped.header.frame_id = robot_frame_id_;
+  transform_stamped.child_frame_id = global_frame_id_;
+  transform_stamped.transform.translation.x = position_inv.x();
+  transform_stamped.transform.translation.y = position_inv.y();
+  transform_stamped.transform.translation.z = position_inv.z();
+  transform_stamped.transform.rotation = quat_msg_inv;
   broadcaster_->sendTransform(transform_stamped);
 
   corrent_pose_stamped_.header.stamp = stamp;
