@@ -304,9 +304,9 @@ void GraphBasedSlamComponent::doPoseAdjustment(
   g2o::SparseOptimizer optimizer;
   optimizer.setVerbose(false);
   std::unique_ptr<g2o::BlockSolver_6_3::LinearSolverType> linear_solver =
-    g2o::make_unique<g2o::LinearSolverEigen<g2o::BlockSolver_6_3::PoseMatrixType>>();
+    std::make_unique<g2o::LinearSolverEigen<g2o::BlockSolver_6_3::PoseMatrixType>>();
   g2o::OptimizationAlgorithmLevenberg * solver = new g2o::OptimizationAlgorithmLevenberg(
-    g2o::make_unique<g2o::BlockSolver_6_3>(std::move(linear_solver)));
+    std::make_unique<g2o::BlockSolver_6_3>(std::move(linear_solver)));
 
   optimizer.setAlgorithm(solver);
 
@@ -366,9 +366,6 @@ void GraphBasedSlamComponent::doPoseAdjustment(
     geometry_msgs::msg::Pose pose = tf2::toMsg(se3);
 
     /* map */
-    Eigen::Affine3d previous_affine;
-    tf2::fromMsg(map_array_msg.submaps[i].pose, previous_affine);
-
     pcl::PointCloud<pcl::PointXYZI>::Ptr cloud_ptr(new pcl::PointCloud<pcl::PointXYZI>());
     pcl::PointCloud<pcl::PointXYZI>::Ptr transformed_cloud_ptr(
       new pcl::PointCloud<pcl::PointXYZI>());
