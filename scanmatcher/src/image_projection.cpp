@@ -124,21 +124,21 @@ public:
     deskewFlag(0)
   {
     auto imu_callback =
-      [this](const sensor_msgs::msg::Imu::ConstPtr msg) -> void
+      [this](const sensor_msgs::msg::Imu::ConstSharedPtr msg) -> void
       {
         imuHandler(msg);
       };
     subImu = create_subscription<sensor_msgs::msg::Imu>(
       imuTopic, rclcpp::SensorDataQoS(), imu_callback);
     auto odom_callback =
-      [this](const nav_msgs::msg::Odometry::ConstPtr msg) -> void
+      [this](const nav_msgs::msg::Odometry::ConstSharedPtr msg) -> void
       {
         odometryHandler(msg);
       };
     subOdom = create_subscription<nav_msgs::msg::Odometry>(
       odomTopic, rclcpp::SensorDataQoS(), odom_callback);
     auto lc_callback =
-      [this](const sensor_msgs::msg::PointCloud2::ConstPtr msg) -> void
+      [this](const sensor_msgs::msg::PointCloud2::ConstSharedPtr msg) -> void
       {
         cloudHandler(msg);
       };
@@ -186,7 +186,7 @@ public:
 
   ~ImageProjection() {}
 
-  void imuHandler(const sensor_msgs::msg::Imu::ConstPtr & imuMsg)
+  void imuHandler(const sensor_msgs::msg::Imu::ConstSharedPtr & imuMsg)
   {
     sensor_msgs::msg::Imu thisImu = imuConverter(*imuMsg);
 
@@ -211,13 +211,13 @@ public:
     // cout << "roll: " << imuRoll << ", pitch: " << imuPitch << ", yaw: " << imuYaw << endl << endl;
   }
 
-  void odometryHandler(const nav_msgs::msg::Odometry::ConstPtr & odometryMsg)
+  void odometryHandler(const nav_msgs::msg::Odometry::ConstSharedPtr & odometryMsg)
   {
     std::lock_guard<std::mutex> lock2(odoLock);
     odomQueue.push_back(*odometryMsg);
   }
 
-  void cloudHandler(const sensor_msgs::msg::PointCloud2::ConstPtr & laserCloudMsg)
+  void cloudHandler(const sensor_msgs::msg::PointCloud2::ConstSharedPtr & laserCloudMsg)
   {
     if (!cachePointCloud(laserCloudMsg)) {
       return;
@@ -236,7 +236,7 @@ public:
     resetParameters();
   }
 
-  bool cachePointCloud(const sensor_msgs::msg::PointCloud2::ConstPtr & laserCloudMsg)
+  bool cachePointCloud(const sensor_msgs::msg::PointCloud2::ConstSharedPtr & laserCloudMsg)
   {
     // cache point cloud
     cloudQueue.push_back(*laserCloudMsg);

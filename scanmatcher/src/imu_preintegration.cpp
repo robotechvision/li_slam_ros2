@@ -122,12 +122,12 @@ public:
   {
 
     auto imu_callback =
-      [this](const sensor_msgs::msg::Imu::ConstPtr msg) -> void
+      [this](const sensor_msgs::msg::Imu::ConstSharedPtr msg) -> void
       {
         imuHandler(msg);
       };
     auto odom_callback =
-      [this](const nav_msgs::msg::Odometry::ConstPtr msg) -> void
+      [this](const nav_msgs::msg::Odometry::ConstSharedPtr msg) -> void
       {
         odometryHandler(msg);
       };
@@ -193,7 +193,7 @@ public:
     systemInitialized = false;
   }
 
-  void odometryHandler(const nav_msgs::msg::Odometry::ConstPtr & odomMsg)
+  void odometryHandler(const nav_msgs::msg::Odometry::ConstSharedPtr & odomMsg)
   {
     double currentCorrectionTime = ROS_TIME(odomMsg);
 
@@ -412,7 +412,7 @@ public:
     return false;
   }
 
-  void imuHandler(const sensor_msgs::msg::Imu::ConstPtr & imu_raw)
+  void imuHandler(const sensor_msgs::msg::Imu::ConstSharedPtr & imu_raw)
   {
     sensor_msgs::msg::Imu thisImu = imuConverter(*imu_raw);
     // publish static tf
