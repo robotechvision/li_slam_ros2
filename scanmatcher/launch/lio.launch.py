@@ -18,7 +18,7 @@ def generate_launch_description():
         package='scanmatcher',
         executable='scanmatcher_node',
         parameters=[mapping_param_dir],
-        remappings=[('/input_cloud','/cloud_deskewed')],
+        remappings=[('/input_cloud','/noground_points')],
         output='screen'
         )
 
@@ -29,27 +29,37 @@ def generate_launch_description():
         output='screen'
         )
 
-    tf = launch_ros.actions.Node(
-        package='tf2_ros',
-        executable='static_transform_publisher',
-        arguments=['0','0','0','0','0','0','1','base_link','velodyne']
-        )
+    # tf = launch_ros.actions.Node(
+    #     package='tf2_ros',
+    #     executable='static_transform_publisher',
+    #     arguments=['0','0','0','0','0','0','1','base_link','velodyne']
+    #     )
+    #
+    # imu_pre = launch_ros.actions.Node(
+    #     package='scanmatcher',
+    #     executable='imu_preintegration',
+    #     remappings=[('/odometry','/ekf_odom/odom')],
+    #     parameters=[mapping_param_dir],
+    #     output='screen'
+    #     )
+    #
+    # img_pro = launch_ros.actions.Node(
+    #     package='scanmatcher',
+    #     executable='image_projection',
+    #     parameters=[mapping_param_dir],
+    #     output='screen'
+    #     )
 
-    imu_pre = launch_ros.actions.Node(
-        package='scanmatcher',
-        executable='imu_preintegration',
-        remappings=[('/odometry','/odom')],
+    ground_filter =  launch_ros.actions.Node(
+        package='rtv_ground_height',
+        executable='grid_interp_ground_height',
         parameters=[mapping_param_dir],
+        remappings=[
+            ('/points_in', '/velodyne_points'),
+            ('/points_out', '/noground_points'),
+        ],
         output='screen'
-        )
-
-    img_pro = launch_ros.actions.Node(
-        package='scanmatcher',
-        executable='image_projection',
-        parameters=[mapping_param_dir],
-        output='screen'
-        )
-    
+    )
 
     return launch.LaunchDescription([
         launch.actions.DeclareLaunchArgument(
@@ -57,8 +67,19 @@ def generate_launch_description():
             default_value=mapping_param_dir,
             description='Full path to mapping parameter file to load'),
         mapping,
-        tf,
-        imu_pre,
-        img_pro,
+        # tf,
+        # imu_pre,
+        # img_pro,
         graphbasedslam,
+        ground_filter,
+        launch_ros.actions.Node(
+            package='rtv_lifecycle',
+            executable='lifecycle_manager',
+            name='lifecycle_manager',
+            output='screen',
+            parameters=[mapping_param_dir,
+                        {
+                            'autostart': True,
+                            'node_names': ['graph_based_slam', 'scan_matcher', 'grid_interp_ground_height']
+                        }]),
             ])

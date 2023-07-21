@@ -41,6 +41,7 @@ extern "C" {
 
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_lifecycle/lifecycle_node.hpp>
+#include <rtv_lifecycle/lifecycle_node.hpp>
 
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_listener.h>
@@ -90,7 +91,7 @@ extern "C" {
 
 namespace graphslam
 {
-  class GraphBasedSlamComponent: public rclcpp_lifecycle::LifecycleNode
+  class GraphBasedSlamComponent: public rtv_lifecycle::LifecycleNode
   {
     typedef rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn LifecycleCallbackReturn;
 public:

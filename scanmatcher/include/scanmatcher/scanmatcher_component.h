@@ -41,6 +41,7 @@ extern "C" {
 
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_lifecycle/lifecycle_node.hpp>
+#include <rtv_lifecycle/lifecycle_node.hpp>
 
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_listener.h>
@@ -82,7 +83,7 @@ using PointType = pcl::PointXYZI;
 namespace graphslam
 {
   //class ScanMatcherComponent : public ParamServer
-  class ScanMatcherComponent: public rclcpp_lifecycle::LifecycleNode
+  class ScanMatcherComponent: public rtv_lifecycle::LifecycleNode
   {
     typedef rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn LifecycleCallbackReturn;
 public:

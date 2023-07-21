@@ -8,7 +8,7 @@ using namespace std::chrono_literals;
 namespace graphslam
 {
 ScanMatcherComponent::ScanMatcherComponent(const rclcpp::NodeOptions & options)
-: rclcpp_lifecycle::LifecycleNode("scan_matcher", options)
+: rtv_lifecycle::LifecycleNode("scan_matcher", "", false, options)
 {
   declare_parameter("global_frame_id", "map");
   declare_parameter("robot_frame_id", "base_link");
@@ -163,6 +163,8 @@ ScanMatcherComponent::LifecycleCallbackReturn ScanMatcherComponent::on_activate(
   map_array_pub_->on_activate();
   path_pub_->on_activate();
   odom_pub_->on_activate();
+
+  createBond();
   return LifecycleCallbackReturn::SUCCESS;
 }
 ScanMatcherComponent::LifecycleCallbackReturn ScanMatcherComponent::on_deactivate(const rclcpp_lifecycle::State &) {
@@ -176,6 +178,7 @@ ScanMatcherComponent::LifecycleCallbackReturn ScanMatcherComponent::on_deactivat
   path_pub_->on_deactivate();
   odom_pub_->on_deactivate();
 
+  destroyBond();
   return LifecycleCallbackReturn::SUCCESS;
 }
 ScanMatcherComponent::LifecycleCallbackReturn ScanMatcherComponent::on_cleanup(const rclcpp_lifecycle::State &) {

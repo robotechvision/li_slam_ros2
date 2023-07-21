@@ -7,7 +7,7 @@ using namespace std::chrono_literals;
 namespace graphslam
 {
 GraphBasedSlamComponent::GraphBasedSlamComponent(const rclcpp::NodeOptions & options)
-: rclcpp_lifecycle::LifecycleNode("graph_based_slam", options)
+: rtv_lifecycle::LifecycleNode("graph_based_slam", "", false, options)
 {
   RCLCPP_INFO(get_logger(), "initialization start");
 
@@ -114,6 +114,7 @@ GraphBasedSlamComponent::LifecycleCallbackReturn GraphBasedSlamComponent::on_act
   modified_map_array_pub_->on_activate();
   modified_path_pub_->on_activate();
 
+  createBond();
   return LifecycleCallbackReturn::SUCCESS;
 }
 GraphBasedSlamComponent::LifecycleCallbackReturn GraphBasedSlamComponent::on_deactivate(const rclcpp_lifecycle::State &) {
@@ -124,6 +125,7 @@ GraphBasedSlamComponent::LifecycleCallbackReturn GraphBasedSlamComponent::on_dea
   modified_map_array_pub_->on_deactivate();
   modified_path_pub_->on_deactivate();
 
+  destroyBond();
   return LifecycleCallbackReturn::SUCCESS;
 }
 GraphBasedSlamComponent::LifecycleCallbackReturn GraphBasedSlamComponent::on_cleanup(const rclcpp_lifecycle::State &) {

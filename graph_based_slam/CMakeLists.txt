@@ -24,6 +24,7 @@ find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(rclcpp_components REQUIRED)
 find_package(rclcpp_lifecycle REQUIRED)
+find_package(rtv_lifecycle REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
@@ -64,6 +65,7 @@ ament_target_dependencies(graph_based_slam_component
   rclcpp
   rclcpp_components
   rclcpp_lifecycle
+  rtv_lifecycle
   tf2_ros
   tf2_eigen
   tf2_geometry_msgs
