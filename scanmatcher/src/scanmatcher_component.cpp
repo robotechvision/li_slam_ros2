@@ -322,15 +322,15 @@ void ScanMatcherComponent::initializeSub()
 
   initial_pose_sub_ =
     create_subscription<geometry_msgs::msg::PoseStamped>(
-    "initial_pose", rclcpp::QoS(10), initial_pose_callback);
+    "initial_pose", rclcpp::QoS(1), initial_pose_callback);
 
   odom_sub_ =
     create_subscription<nav_msgs::msg::Odometry>(
-    "preintegrated_odom", rclcpp::SensorDataQoS(), odom_callback);
+    "preintegrated_odom", rclcpp::QoS(1).best_effort(), odom_callback);
 
   input_cloud_sub_ =
     create_subscription<sensor_msgs::msg::PointCloud2>(
-    "input_cloud", rclcpp::SensorDataQoS(), cloud_callback);
+    "input_cloud", rclcpp::QoS(1).best_effort(), cloud_callback);
 }
 
 void ScanMatcherComponent::receiveCloud(

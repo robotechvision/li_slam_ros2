@@ -144,14 +144,14 @@ void GraphBasedSlamComponent::initializePub()
 
   modified_map_pub_ = create_publisher<sensor_msgs::msg::PointCloud2>(
     "modified_map",
-    rclcpp::QoS(10));
+    rclcpp::QoS(1));
 
   modified_map_array_pub_ = create_publisher<lidarslam_msgs::msg::MapArray>(
-    "modified_map_array", rclcpp::QoS(10));
+    "modified_map_array", rclcpp::QoS(1));
 
   modified_path_pub_ = create_publisher<nav_msgs::msg::Path>(
     "modified_path",
-    rclcpp::QoS(10));
+    rclcpp::QoS(1));
 
   RCLCPP_INFO(get_logger(), "initialization end");
 
