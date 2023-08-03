@@ -134,7 +134,7 @@ namespace graphslam
     void initializePub();
     void initializeSub();
     void searchLoop();
-    void doPoseAdjustment(const lidarslam_msgs::msg::MapArray &map_array_msg, bool do_save_map, bool just_loaded = false);
+    void doPoseAdjustment(lidarslam_msgs::msg::MapArray &map_array_msg, bool do_save_map, bool just_loaded = false);
     void publishMapAndPose();
     void saveSubmaps(const lidarslam_msgs::msg::MapArray &submaps, const std::vector<LoopEdge> &loop_edges) const;
     bool loadSubmaps(lidarslam_msgs::msg::MapArray &submaps, std::vector<LoopEdge> &loop_edges) const;
@@ -151,6 +151,7 @@ namespace graphslam
     bool use_save_map_in_loop_ {true};
 
     std::string pose_graph_path_;
+    bool loaded_map_static_;
     size_t loaded_submaps_cnt_;
 
     bool initial_map_array_received_ {false};

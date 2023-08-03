@@ -58,11 +58,12 @@ graph_based_slam:
       voxel_leaf_size: 0.1
       loop_detection_period: 3000
       threshold_loop_closure_score: 1.0
-      distance_loop_closure: 25.0
-      range_of_searching_loop_closure: 20.0
+      distance_loop_closure: 20.0
+      range_of_searching_loop_closure: 4.0
       search_submap_num: 4
       num_adjacent_pose_cnstraints: 2
       use_save_map_in_loop: false
+      loaded_map_static: true
 
 grid_interp_ground_height:
     ros__parameters:
