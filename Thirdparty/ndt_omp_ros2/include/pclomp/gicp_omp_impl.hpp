@@ -216,8 +216,8 @@ pclomp::GeneralizedIterativeClosestPoint<PointSource, PointTarget>::estimateRigi
   bfgs.parameters.order = 3;
 
   int inner_iterations_ = 0;
-  int result = bfgs.minimizeInit (x);
-  result = BFGSSpace::Running;
+  bfgs.minimizeInit (x);
+  int result;
   do
   {
     inner_iterations_++;
@@ -363,6 +363,28 @@ pclomp::GeneralizedIterativeClosestPoint<PointSource, PointTarget>::Optimization
   g.head<3> ()*= double(2.0/m);
   R*= 2.0/m;
   gicp_->computeRDerivative(x, R, g);
+}
+
+////////////////////////////////////////////////////////////////////////////////////////
+template <typename PointSource, typename PointTarget> inline BFGSSpace::Status
+pclomp::GeneralizedIterativeClosestPoint<PointSource, PointTarget>::OptimizationFunctorWithIndices::checkGradient(const Vector6d& g)
+{
+  auto translation_epsilon = gicp_->translation_gradient_tolerance_;
+  auto rotation_epsilon = gicp_->rotation_gradient_tolerance_;
+
+  if ((translation_epsilon < 0.) || (rotation_epsilon < 0.))
+    return BFGSSpace::NegativeGradientEpsilon;
+
+  // express translation gradient as norm of translation parameters
+  auto translation_grad = g.head<3>().norm();
+
+  // express rotation gradient as a norm of rotation parameters
+  auto rotation_grad = g.tail<3>().norm();
+
+  if ((translation_grad < translation_epsilon) && (rotation_grad < rotation_epsilon))
+    return BFGSSpace::Success;
+
+  return BFGSSpace::Running;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////
