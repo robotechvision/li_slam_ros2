@@ -18,6 +18,7 @@ def generate_launch_description():
         package='scanmatcher',
         executable='scanmatcher_node',
         parameters=[mapping_param_dir],
+        # prefix="gnome-terminal -- gdb -ex run --args",
         remappings=[('/input_cloud','/noground_points')],
         output='screen'
         )
@@ -25,6 +26,7 @@ def generate_launch_description():
     graphbasedslam = launch_ros.actions.Node(
         package='graph_based_slam',
         executable='graph_based_slam_node',
+        # prefix="gnome-terminal -- gdb -ex run --args",
         parameters=[mapping_param_dir],
         output='screen'
         )
@@ -79,7 +81,8 @@ def generate_launch_description():
             output='screen',
             parameters=[mapping_param_dir,
                         {
-                            'autostart': True,
+                            'autostart': False,
+                            'bond_timeout': 100000.0,
                             'node_names': ['graph_based_slam', 'scan_matcher', 'grid_interp_ground_height']
                         }]),
             ])

@@ -48,7 +48,11 @@ scan_matcher:
 
 graph_based_slam:
     ros__parameters:
-      registration_method: "GICP"
+      registration_method: "FastGICP"
+      rotation_epsilon: 2e-3
+      transformation_epsilon: 5e-4
+      num_threads: 10
+      max_num_iterations: 256
       ndt_resolution: 5.0
       ndt_num_threads: 1
       voxel_leaf_size: 0.1
@@ -57,7 +61,7 @@ graph_based_slam:
       distance_loop_closure: 25.0
       range_of_searching_loop_closure: 20.0
       search_submap_num: 4
-      num_adjacent_pose_cnstraints: 5
+      num_adjacent_pose_cnstraints: 2
       use_save_map_in_loop: false
 
 grid_interp_ground_height:

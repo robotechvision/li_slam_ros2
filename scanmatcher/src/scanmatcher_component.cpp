@@ -125,6 +125,7 @@ ScanMatcherComponent::LifecycleCallbackReturn ScanMatcherComponent::on_configure
     registration_ = gicp;
   }
 
+  map_array_msg_.submaps.clear();
   map_array_msg_.header.frame_id = global_frame_id_;
   map_array_msg_.cloud_coordinate = map_array_msg_.LOCAL;
 
@@ -337,6 +338,7 @@ void ScanMatcherComponent::initializeSub()
           map_array_msg_.submaps.push_back(submap);
 
           map_pub_->publish(submap.cloud);
+          map_array_pub_->publish(map_array_msg_);
 
           last_map_time_ = now();
 

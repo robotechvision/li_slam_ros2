@@ -1,6 +1,8 @@
 #include "graph_based_slam/graph_based_slam_component.h"
 #include <chrono>
 #include "tf2_ros/create_timer_ros.h"
+#include "rclcpp/serialization.hpp"
+#include "fast_gicp/gicp/fast_gicp.hpp"
 
 using namespace std::chrono_literals;
 
@@ -23,6 +25,10 @@ GraphBasedSlamComponent::GraphBasedSlamComponent(const rclcpp::NodeOptions & opt
   declare_parameter("num_adjacent_pose_cnstraints", 5);
   declare_parameter("use_save_map_in_loop", true);
   declare_parameter("pose_graph_path", std::string("pose_graph.g2o"));
+  declare_parameter("rotation_epsilon", 2e-3);
+  declare_parameter("transformation_epsilon", 5e-4);
+  declare_parameter("max_num_iterations", 64);
+  declare_parameter("num_threads", 10);
 }
 
 GraphBasedSlamComponent::LifecycleCallbackReturn GraphBasedSlamComponent::on_configure(const rclcpp_lifecycle::State &) {
@@ -37,6 +43,10 @@ GraphBasedSlamComponent::LifecycleCallbackReturn GraphBasedSlamComponent::on_con
   double voxel_leaf_size;
   double ndt_resolution;
   int ndt_num_threads;
+  double rotaton_epsilon;
+  double transformation_epsilon;
+  int max_num_iterations;
+  int num_threads;
 
   get_parameter("registration_method", registration_method);
   get_parameter("voxel_leaf_size", voxel_leaf_size);
@@ -50,6 +60,10 @@ GraphBasedSlamComponent::LifecycleCallbackReturn GraphBasedSlamComponent::on_con
   get_parameter("num_adjacent_pose_cnstraints", num_adjacent_pose_cnstraints_);
   get_parameter("use_save_map_in_loop", use_save_map_in_loop_);
   get_parameter("pose_graph_path", pose_graph_path_);
+  get_parameter("rotaton_epsilon", rotaton_epsilon);
+  get_parameter("transformation_epsilon", transformation_epsilon);
+  get_parameter("max_num_iterations", max_num_iterations);
+  get_parameter("num_threads", num_threads);
 
   std::cout << "registration_method:" << registration_method << std::endl;
   std::cout << "voxel_leaf_size[m]:" << voxel_leaf_size << std::endl;
@@ -73,20 +87,34 @@ GraphBasedSlamComponent::LifecycleCallbackReturn GraphBasedSlamComponent::on_con
     ndt->setMaximumIterations(100);
     ndt->setResolution(ndt_resolution);
     // ndt->setTransformationEpsilon(0.01);
-    ndt->setTransformationEpsilon(1e-6);
+    ndt->setTransformationRotationEpsilon(rotaton_epsilon);
+    ndt->setTransformationEpsilon( transformation_epsilon);
     ndt->setNeighborhoodSearchMethod(pclomp::DIRECT7);
     if (ndt_num_threads > 0) {ndt->setNumThreads(ndt_num_threads);}
     registration_ = ndt;
-  } else {
+  } else if (registration_method == "GICP") {
     boost::shared_ptr<pclomp::GeneralizedIterativeClosestPoint<pcl::PointXYZI, pcl::PointXYZI>>
       gicp(new pclomp::GeneralizedIterativeClosestPoint<pcl::PointXYZI, pcl::PointXYZI>());
     gicp->setMaxCorrespondenceDistance(30);
     gicp->setMaximumIterations(100);
     //gicp->setCorrespondenceRandomness(20);
-    gicp->setTransformationEpsilon(1e-8);
+    gicp->setRotationEpsilon(rotaton_epsilon);
+    gicp->setTransformationEpsilon(transformation_epsilon);
     gicp->setEuclideanFitnessEpsilon(1e-6);
     gicp->setRANSACIterations(0);
     registration_ = gicp;
+  } else if (registration_method == "FastGICP") {
+    boost::shared_ptr<fast_gicp::FastGICP<pcl::PointXYZI, pcl::PointXYZI>>
+        gicp(new fast_gicp::FastGICP<pcl::PointXYZI, pcl::PointXYZI>());
+    gicp->setNumThreads(num_threads);
+    gicp->setDebugPrint(true);
+    gicp->setTransformationEpsilon(transformation_epsilon);  //
+    gicp->setMaximumIterations(max_num_iterations);
+    gicp->setRANSACIterations(50);
+    //gicp->setMaxCorrespondenceDistance(20);
+    registration_ = gicp;
+  } else {
+    throw std::runtime_error("registration method " + registration_method + " does not exist");
   }
 
   initializePub();
@@ -99,10 +127,12 @@ GraphBasedSlamComponent::LifecycleCallbackReturn GraphBasedSlamComponent::on_con
     modified_map_pub_->on_activate();
     modified_map_array_pub_->on_activate();
     modified_path_pub_->on_activate();
+    saved_path_pub_->on_activate();
     doPoseAdjustment(map_array_msg_, false, true);  // publish initial map
     modified_map_pub_->on_deactivate();
     modified_map_array_pub_->on_deactivate();
     modified_path_pub_->on_deactivate();
+    saved_path_pub_->on_deactivate();
   }
 
   auto map_save_callback =
@@ -129,6 +159,9 @@ GraphBasedSlamComponent::LifecycleCallbackReturn GraphBasedSlamComponent::on_act
   modified_map_pub_->on_activate();
   modified_map_array_pub_->on_activate();
   modified_path_pub_->on_activate();
+  saved_path_pub_->on_activate();
+  input_path_pub_->on_activate();
+  registration_pub_->on_activate();
 
   createBond();
   return LifecycleCallbackReturn::SUCCESS;
@@ -140,6 +173,9 @@ GraphBasedSlamComponent::LifecycleCallbackReturn GraphBasedSlamComponent::on_dea
   modified_map_pub_->on_deactivate();
   modified_map_array_pub_->on_deactivate();
   modified_path_pub_->on_deactivate();
+  saved_path_pub_->on_deactivate();
+  input_path_pub_->on_deactivate();
+  registration_pub_->on_deactivate();
 
   destroyBond();
   return LifecycleCallbackReturn::SUCCESS;
@@ -148,6 +184,9 @@ GraphBasedSlamComponent::LifecycleCallbackReturn GraphBasedSlamComponent::on_cle
   modified_map_array_pub_.reset();
   modified_map_array_pub_.reset();
   modified_path_pub_.reset();
+  saved_path_pub_.reset();
+  input_path_pub_.reset();
+  registration_pub_.reset();
   map_save_srv_.reset();
 
   broadcaster_.reset();
@@ -164,12 +203,24 @@ void GraphBasedSlamComponent::initializePub()
     "modified_map",
     rclcpp::QoS(1).transient_local());
 
+  registration_pub_ = create_publisher<sensor_msgs::msg::PointCloud2>(
+      "registration_cloud",
+      rclcpp::QoS(1).transient_local());
+
   modified_map_array_pub_ = create_publisher<lidarslam_msgs::msg::MapArray>(
     "modified_map_array", rclcpp::QoS(1).transient_local());
 
   modified_path_pub_ = create_publisher<nav_msgs::msg::Path>(
     "modified_path",
     rclcpp::QoS(1).transient_local());
+
+  saved_path_pub_ = create_publisher<nav_msgs::msg::Path>(
+      "saved_path",
+      rclcpp::QoS(1).transient_local());
+
+  input_path_pub_ = create_publisher<nav_msgs::msg::Path>(
+      "input_path",
+      rclcpp::QoS(1).transient_local());
 
   RCLCPP_INFO(get_logger(), "initialization end");
 
@@ -183,7 +234,14 @@ void GraphBasedSlamComponent::initializeSub()
     [this](const typename lidarslam_msgs::msg::MapArray::SharedPtr msg_ptr) -> void
     {
       std::lock_guard<std::mutex> lock(mtx_);
-      map_array_msg_ = *msg_ptr;
+      map_array_msg_.cloud_coordinate = msg_ptr->cloud_coordinate;
+      map_array_msg_.header = msg_ptr->header;
+      map_array_msg_.submaps.resize(loaded_submaps_cnt_);
+      map_array_msg_.submaps.insert(map_array_msg_.submaps.end(), msg_ptr->submaps.begin(), msg_ptr->submaps.end());
+      if (!msg_ptr->submaps.empty())
+        map_array_msg_.submaps[loaded_submaps_cnt_].adjacency_broken = true;
+        // for (int i = 0; i < msg_ptr->submaps.size(); i++)
+        //   map_array_msg_.submaps[loaded_submaps_cnt_ + i].adjacency_broken = true;
       initial_map_array_received_ = true;
       is_map_array_updated_ = true;
     };
@@ -221,17 +279,18 @@ void GraphBasedSlamComponent::searchLoop()
   double distance_min_fitness_score = 0;
   bool is_candidate = false;
 
+  pcl::console::setVerbosityLevel(pcl::console::VERBOSITY_LEVEL::L_VERBOSE);
   lidarslam_msgs::msg::SubMap latest_submap;
   latest_submap = map_array_msg.submaps[num_submaps - 1];
   Eigen::Affine3d latest_submap_affine;
   tf2::fromMsg(latest_submap.pose, latest_submap_affine);
   pcl::PointCloud<pcl::PointXYZI>::Ptr latest_submap_cloud_ptr(new pcl::PointCloud<pcl::PointXYZI>);
   pcl::fromROSMsg(latest_submap.cloud, *latest_submap_cloud_ptr);
-  pcl::PointCloud<pcl::PointXYZI>::Ptr transformed_latest_submap_cloud_ptr(new pcl::PointCloud<pcl::PointXYZI>);
+  // pcl::PointCloud<pcl::PointXYZI>::Ptr transformed_latest_submap_cloud_ptr(new pcl::PointCloud<pcl::PointXYZI>);
   Eigen::Affine3d latest_affine;
   tf2::fromMsg(latest_submap.pose, latest_affine);
-  pcl::transformPointCloud(*latest_submap_cloud_ptr, *transformed_latest_submap_cloud_ptr, latest_affine.matrix().cast<float>());
-  registration_->setInputSource(transformed_latest_submap_cloud_ptr);
+  // pcl::transformPointCloud(*latest_submap_cloud_ptr, *transformed_latest_submap_cloud_ptr, latest_affine.matrix().cast<float>());
+  registration_->setInputSource(latest_submap_cloud_ptr);
   double latest_moving_distance = latest_submap.distance;
   Eigen::Vector3d latest_submap_pos{
     latest_submap.pose.position.x,
@@ -259,14 +318,16 @@ void GraphBasedSlamComponent::searchLoop()
 
   if (is_candidate) {
       pcl::PointCloud<pcl::PointXYZI>::Ptr submap_clouds_ptr(new pcl::PointCloud<pcl::PointXYZI>);
-      for (int j = 0; j <= 2 * search_submap_num_; ++j) {
-        if (id_min + j - search_submap_num_ < 0) {continue;}
-        auto near_submap = map_array_msg.submaps[id_min + j - search_submap_num_];
+      for (int j = id_min - search_submap_num_; j <= id_min + search_submap_num_; ++j) {
+        if (j < 0) {continue;}
+        if (j >= num_submaps - 1) {break;}
+        auto near_submap = map_array_msg.submaps[j];  //
         pcl::PointCloud<pcl::PointXYZI>::Ptr submap_cloud_ptr(new pcl::PointCloud<pcl::PointXYZI>);
         pcl::fromROSMsg(near_submap.cloud, *submap_cloud_ptr);
         pcl::PointCloud<pcl::PointXYZI>::Ptr transformed_submap_cloud_ptr(new pcl::PointCloud<pcl::PointXYZI>);
         Eigen::Affine3d affine;
         tf2::fromMsg(near_submap.pose, affine);
+        affine = latest_affine.inverse()*affine;
         pcl::transformPointCloud(*submap_cloud_ptr, *transformed_submap_cloud_ptr, affine.matrix().cast<float>());
         *submap_clouds_ptr += *transformed_submap_cloud_ptr;
       }
@@ -280,43 +341,71 @@ void GraphBasedSlamComponent::searchLoop()
       registration_->align(*output_cloud_ptr);
       double fitness_score = registration_->getFitnessScore();
 
-      if (fitness_score < threshold_loop_closure_score_) {
+      Eigen::Isometry3d registration_trans(registration_->getFinalTransformation().cast<double>());
 
-        Eigen::Affine3d init_affine;
-        tf2::fromMsg(latest_submap.pose, init_affine);
-        Eigen::Affine3d submap_affine;
-        tf2::fromMsg(min_submap.pose, submap_affine);
+      if (registration_->hasConverged() && fitness_score < threshold_loop_closure_score_) {
+
+        Eigen::Affine3d reference_affine;
+        tf2::fromMsg(min_submap.pose, reference_affine);
 
         LoopEdge loop_edge;
-        loop_edge.pair_id = std::pair<int, int>(id_min, num_submaps - 1);
-        Eigen::Isometry3d from = Eigen::Isometry3d(submap_affine.matrix());
-        Eigen::Isometry3d to = Eigen::Isometry3d(
-          registration_->getFinalTransformation().cast<double>() * init_affine.matrix());
+        loop_edge.pair_id = std::pair<int, int>(num_submaps - 1, id_min);
 
-        loop_edge.relative_pose = Eigen::Isometry3d(from.inverse() * to);
+        Eigen::Isometry3d latest_iso(latest_affine.matrix());
+        Eigen::Isometry3d reference_iso(reference_affine.matrix());
+        loop_edge.relative_pose = registration_trans.inverse() * latest_iso.inverse() * reference_iso;
         loop_edges_.push_back(loop_edge);
 
         std::cout << "---" << std::endl;
         std::cout << "PoseAdjustment" << std::endl;
         std::cout << "distance:" << min_submap.distance << ", score:" << fitness_score << std::endl;
-        std::cout << "id_loop_point 1:" << id_min << std::endl;
-        std::cout << "id_loop_point 2:" << num_submaps - 1 << std::endl;
+        std::cout << "id_loop_point 1:" << num_submaps - 1 << std::endl;
+        std::cout << "id_loop_point 2:" << id_min << std::endl;
         std::cout << "final transformation:" << std::endl;
         std::cout << registration_->getFinalTransformation() << std::endl;
+        std::cout << "relative pose:" << std::endl;
+        std::cout << loop_edge.relative_pose.matrix() << std::endl;
         doPoseAdjustment(map_array_msg, use_save_map_in_loop_);
-
-        return;
       }
 
-      std::cout << "-" << std::endl;
-      std::cout << "min_submap_distance:" << min_submap.distance << std::endl;
-      std::cout << "min_fitness_score:" << fitness_score << std::endl;
+    pcl::PointCloud<pcl::PointXYZI>::Ptr registration_clouds_ptr(new pcl::PointCloud<pcl::PointXYZI>);
+    for (auto &p : latest_submap_cloud_ptr->points)
+      p.intensity = 0;
+    *registration_clouds_ptr += *latest_submap_cloud_ptr;
+    for (auto &p : submap_clouds_ptr->points)
+      p.intensity = 1;
+    *registration_clouds_ptr += *submap_clouds_ptr;
+    for (auto &p : latest_submap_cloud_ptr->points) {
+      auto pe = p.getVector4fMap();
+      pe = (registration_trans*pe.cast<double>()).eval().cast<float>();
+      p.intensity = 2;
+    }
+    *registration_clouds_ptr += *latest_submap_cloud_ptr;
+    sensor_msgs::msg::PointCloud2 registration_clouds_msg;
+    pcl::toROSMsg(*registration_clouds_ptr, registration_clouds_msg);
+    registration_clouds_msg.header.frame_id = "map";
+    registration_pub_->publish(registration_clouds_msg);
+
+    nav_msgs::msg::Path path;
+    path.header.frame_id = "map";
+    for (int i = 0; i < num_submaps; i++) {
+      /* path */
+      geometry_msgs::msg::PoseStamped pose_stamped;
+      pose_stamped.header = map_array_msg.submaps[i].header;
+      pose_stamped.pose = map_array_msg.submaps[i].pose;
+      path.poses.push_back(pose_stamped);
+    }
+    input_path_pub_->publish(path);
+
+    std::cout << "-" << std::endl;
+    std::cout << "min_submap_distance:" << min_submap.distance << std::endl;
+    std::cout << "min_fitness_score:" << fitness_score << std::endl;
   }
 }
 
 void GraphBasedSlamComponent::doPoseAdjustment(
-  lidarslam_msgs::msg::MapArray map_array_msg,
-  bool do_save_map)
+  const lidarslam_msgs::msg::MapArray &map_array_msg,
+  bool do_save_map, bool just_loaded)
 {
 
   g2o::SparseOptimizer optimizer;
@@ -338,21 +427,28 @@ void GraphBasedSlamComponent::doPoseAdjustment(
     g2o::VertexSE3 * vertex_se3 = new g2o::VertexSE3();
     vertex_se3->setId(i);
     vertex_se3->setEstimate(pose);
-    if (i == 0) {vertex_se3->setFixed(true);}
+    if (i == 0) {vertex_se3->setFixed(true);}  // TODO: add || i < loaded_submaps_cnt_ if pure_localization is true (requires saving of optimized map instead of raw)
     optimizer.addVertex(vertex_se3);
 
-    if (i > num_adjacent_pose_cnstraints_) {
-      for (int j = 0; j < num_adjacent_pose_cnstraints_; j++) {
+    if (i >= loaded_submaps_cnt_)
+      RCLCPP_INFO(get_logger(), "%d adjacency_broken: %d", i, (int)map_array_msg.submaps[i].adjacency_broken);
+    if (!map_array_msg.submaps[i].adjacency_broken) {
+      for (int j = i - 1; j >= i - num_adjacent_pose_cnstraints_; j--) {
         Eigen::Affine3d pre_affine;
-        Eigen::fromMsg(map_array_msg.submaps[i - num_adjacent_pose_cnstraints_ + j].pose, pre_affine);
+        Eigen::fromMsg(map_array_msg.submaps[j].pose, pre_affine);
         Eigen::Isometry3d pre_pose(pre_affine.matrix());
-        Eigen::Isometry3d relative_pose = pre_pose.inverse() * pose;
-        g2o::EdgeSE3 * edge_se3 = new g2o::EdgeSE3();
+        Eigen::Isometry3d relative_pose = pre_pose.inverse()*pose;
+        g2o::EdgeSE3 *edge_se3 = new g2o::EdgeSE3();
         edge_se3->setMeasurement(relative_pose);
         edge_se3->setInformation(info_mat);
-        edge_se3->vertices()[0] = optimizer.vertex(i - num_adjacent_pose_cnstraints_ + j);
+        edge_se3->vertices()[0] = optimizer.vertex(j);
         edge_se3->vertices()[1] = optimizer.vertex(i);
         optimizer.addEdge(edge_se3);
+        if (i >= loaded_submaps_cnt_)
+          RCLCPP_INFO_STREAM(get_logger(), j << " -> " << i << ", trans:\n" << relative_pose.translation().transpose() << ", rot:\n" <<
+                             Eigen::Quaterniond(relative_pose.rotation()) << "\n");
+        if (map_array_msg.submaps[j].adjacency_broken)
+          break;
       }
     }
 
@@ -364,6 +460,17 @@ void GraphBasedSlamComponent::doPoseAdjustment(
     edge_se3->setInformation(info_mat);
     edge_se3->vertices()[0] = optimizer.vertex(loop_edge.pair_id.first);
     edge_se3->vertices()[1] = optimizer.vertex(loop_edge.pair_id.second);
+
+    if (loop_edge.pair_id.first >= loaded_submaps_cnt_ || loop_edge.pair_id.second >= loaded_submaps_cnt_) {
+      Eigen::Affine3d pose1, pose2;
+      Eigen::fromMsg(map_array_msg.submaps[loop_edge.pair_id.first].pose, pose1);
+      Eigen::fromMsg(map_array_msg.submaps[loop_edge.pair_id.second].pose, pose2);
+      Eigen::Isometry3d correction = (Eigen::Isometry3d(pose1.matrix()).inverse()*Eigen::Isometry3d(pose2.matrix())).inverse()*loop_edge.relative_pose;
+      RCLCPP_INFO_STREAM(get_logger(),
+                         loop_edge.pair_id.first << " LLL> " << loop_edge.pair_id.second << ", trans:\n" <<
+                                                 correction.translation().transpose() << ", rot:\n"
+                                                 << Eigen::Quaterniond(correction.rotation()) << "\n");
+    }
     optimizer.addEdge(edge_se3);
   }
 
@@ -392,6 +499,8 @@ void GraphBasedSlamComponent::doPoseAdjustment(
     pcl::transformPointCloud(*cloud_ptr, *transformed_cloud_ptr, se3.matrix().cast<float>());
     sensor_msgs::msg::PointCloud2::SharedPtr cloud_msg_ptr(new sensor_msgs::msg::PointCloud2);
     pcl::toROSMsg(*transformed_cloud_ptr, *cloud_msg_ptr);
+    for (auto &p : transformed_cloud_ptr->points)
+      p.intensity = i;
     *map_ptr += *transformed_cloud_ptr;
 
     /* submap */
@@ -411,6 +520,8 @@ void GraphBasedSlamComponent::doPoseAdjustment(
 
   modified_map_array_pub_->publish(modified_map_array_msg);
   modified_path_pub_->publish(path);
+  if (do_save_map || just_loaded)
+    saved_path_pub_->publish(path);
 
   sensor_msgs::msg::PointCloud2::SharedPtr map_msg_ptr(new sensor_msgs::msg::PointCloud2);
   pcl::toROSMsg(*map_ptr, *map_msg_ptr);

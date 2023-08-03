@@ -100,7 +100,7 @@ namespace graphslam
       Eigen::Isometry3d relative_pose;
     };
 
-public:
+  public:
     GS_GBS_PUBLIC
     explicit GraphBasedSlamComponent(const rclcpp::NodeOptions & options);
 
@@ -109,7 +109,7 @@ public:
     LifecycleCallbackReturn on_deactivate(const rclcpp_lifecycle::State &) override;
     LifecycleCallbackReturn on_cleanup(const rclcpp_lifecycle::State &) override;
 
-private:
+  private:
     std::mutex mtx_;
 
     // rclcpp::Clock clock_;
@@ -123,15 +123,18 @@ private:
     lidarslam_msgs::msg::MapArray map_array_msg_;
     rclcpp::Subscription < lidarslam_msgs::msg::MapArray > ::SharedPtr map_array_sub_;
     rclcpp_lifecycle::LifecyclePublisher < lidarslam_msgs::msg::MapArray > ::SharedPtr modified_map_array_pub_;
+    rclcpp_lifecycle::LifecyclePublisher < nav_msgs::msg::Path > ::SharedPtr input_path_pub_;
     rclcpp_lifecycle::LifecyclePublisher < nav_msgs::msg::Path > ::SharedPtr modified_path_pub_;
+    rclcpp_lifecycle::LifecyclePublisher < nav_msgs::msg::Path > ::SharedPtr saved_path_pub_;
     rclcpp_lifecycle::LifecyclePublisher < sensor_msgs::msg::PointCloud2 > ::SharedPtr modified_map_pub_;
+    rclcpp_lifecycle::LifecyclePublisher < sensor_msgs::msg::PointCloud2 > ::SharedPtr registration_pub_;
     rclcpp::TimerBase::SharedPtr loop_detect_timer_;
     rclcpp::Service < std_srvs::srv::Empty > ::SharedPtr map_save_srv_;
 
     void initializePub();
     void initializeSub();
     void searchLoop();
-    void doPoseAdjustment(lidarslam_msgs::msg::MapArray map_array_msg, bool do_save_map);
+    void doPoseAdjustment(const lidarslam_msgs::msg::MapArray &map_array_msg, bool do_save_map, bool just_loaded = false);
     void publishMapAndPose();
     void saveSubmaps(const lidarslam_msgs::msg::MapArray &submaps, const std::vector<LoopEdge> &loop_edges) const;
     bool loadSubmaps(lidarslam_msgs::msg::MapArray &submaps, std::vector<LoopEdge> &loop_edges) const;
@@ -148,6 +151,8 @@ private:
     bool use_save_map_in_loop_ {true};
 
     std::string pose_graph_path_;
+    size_t loaded_submaps_cnt_;
+
     bool initial_map_array_received_ {false};
     bool is_map_array_updated_ {false};
     int previous_submaps_num_ {0};
