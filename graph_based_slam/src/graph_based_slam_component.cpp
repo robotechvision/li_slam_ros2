@@ -22,6 +22,7 @@ GraphBasedSlamComponent::GraphBasedSlamComponent(const rclcpp::NodeOptions & opt
   declare_parameter("search_submap_num", 3);
   declare_parameter("num_adjacent_pose_cnstraints", 5);
   declare_parameter("use_save_map_in_loop", true);
+  declare_parameter("pose_graph_path", std::string("pose_graph.g2o"));
 }
 
 GraphBasedSlamComponent::LifecycleCallbackReturn GraphBasedSlamComponent::on_configure(const rclcpp_lifecycle::State &) {
@@ -48,6 +49,7 @@ GraphBasedSlamComponent::LifecycleCallbackReturn GraphBasedSlamComponent::on_con
   get_parameter("search_submap_num", search_submap_num_);
   get_parameter("num_adjacent_pose_cnstraints", num_adjacent_pose_cnstraints_);
   get_parameter("use_save_map_in_loop", use_save_map_in_loop_);
+  get_parameter("pose_graph_path", pose_graph_path_);
 
   std::cout << "registration_method:" << registration_method << std::endl;
   std::cout << "voxel_leaf_size[m]:" << voxel_leaf_size << std::endl;
@@ -88,6 +90,20 @@ GraphBasedSlamComponent::LifecycleCallbackReturn GraphBasedSlamComponent::on_con
   }
 
   initializePub();
+
+  map_array_msg_.submaps.clear();
+  loaded_submaps_cnt_ = 0;
+  if (loadSubmaps(map_array_msg_, loop_edges_)) {
+    loaded_submaps_cnt_ = map_array_msg_.submaps.size();
+    RCLCPP_INFO(get_logger(), "Loaded reference map with %d submaps", static_cast<int>(loaded_submaps_cnt_));
+    modified_map_pub_->on_activate();
+    modified_map_array_pub_->on_activate();
+    modified_path_pub_->on_activate();
+    doPoseAdjustment(map_array_msg_, false, true);  // publish initial map
+    modified_map_pub_->on_deactivate();
+    modified_map_array_pub_->on_deactivate();
+    modified_path_pub_->on_deactivate();
+  }
 
   auto map_save_callback =
     [this](const std::shared_ptr<rmw_request_id_t> request_header,
@@ -146,14 +162,14 @@ void GraphBasedSlamComponent::initializePub()
 
   modified_map_pub_ = create_publisher<sensor_msgs::msg::PointCloud2>(
     "modified_map",
-    rclcpp::QoS(1));
+    rclcpp::QoS(1).transient_local());
 
   modified_map_array_pub_ = create_publisher<lidarslam_msgs::msg::MapArray>(
-    "modified_map_array", rclcpp::QoS(1));
+    "modified_map_array", rclcpp::QoS(1).transient_local());
 
   modified_path_pub_ = create_publisher<nav_msgs::msg::Path>(
     "modified_path",
-    rclcpp::QoS(1));
+    rclcpp::QoS(1).transient_local());
 
   RCLCPP_INFO(get_logger(), "initialization end");
 
@@ -353,7 +369,7 @@ void GraphBasedSlamComponent::doPoseAdjustment(
 
   optimizer.initializeOptimization();
   optimizer.optimize(10);
-  optimizer.save("pose_graph.g2o");
+  optimizer.save(pose_graph_path_.c_str());
 
   /* modified_map publish */
   std::cout << "modified_map publish" << std::endl;
@@ -400,10 +416,117 @@ void GraphBasedSlamComponent::doPoseAdjustment(
   pcl::toROSMsg(*map_ptr, *map_msg_ptr);
   map_msg_ptr->header.frame_id = "map";
   modified_map_pub_->publish(*map_msg_ptr);
-  if (do_save_map) {pcl::io::savePCDFileASCII("map.pcd", *map_ptr);} // too heavy
-
+  if (do_save_map) {
+    pcl::io::savePCDFileASCII("map.pcd", *map_ptr); // too heavy
+    // TODO(afrixs): I think that using modified map array instead would be a more proper way, but for now we follow
+    //               the original procedure, so we will also save/load the non-optimized map array
+    saveSubmaps(map_array_msg, loop_edges_);
+  }
 }
 
+void GraphBasedSlamComponent::saveSubmaps(const lidarslam_msgs::msg::MapArray &submaps, const std::vector<LoopEdge> &loop_edges) const
+{
+  {  // Submaps
+    RCLCPP_DEBUG(get_logger(), "serializing submaps");
+    rclcpp::Serialization<lidarslam_msgs::msg::MapArray> serializer;
+    std::shared_ptr<rclcpp::SerializedMessage> serialized_msg = std::make_shared<rclcpp::SerializedMessage>();
+    serializer.serialize_message(&submaps, serialized_msg.get());
+    rcl_serialized_message_t rcl_serialized_msg = serialized_msg->get_rcl_serialized_message();
+    RCLCPP_DEBUG(get_logger(), "message serialized");
+
+    std::string submaps_path = pose_graph_path_ + ".submaps";
+    std::ofstream file(submaps_path, std::ios::binary);
+    if (file.is_open()) {
+      file.write(reinterpret_cast<const char *>(rcl_serialized_msg.buffer), rcl_serialized_msg.buffer_length);
+      file.close();
+      RCLCPP_INFO(get_logger(), "Submaps saved successfully to file %s", submaps_path.c_str());
+    } else {
+      RCLCPP_ERROR(get_logger(), "Unable to open submaps file %s for writing", submaps_path.c_str());
+    }
+  }
+
+  {  // Loop edges
+    std::string loop_edges_path = pose_graph_path_ + ".loop_edges";
+    std::ofstream loop_edges_file(loop_edges_path, std::ios::binary);
+    if (loop_edges_file.is_open()) {
+      loop_edges_file.write(reinterpret_cast<const char *>(loop_edges.data()),
+                            loop_edges.size()*sizeof(LoopEdge));
+      loop_edges_file.close();
+      RCLCPP_DEBUG(get_logger(), "Loop edges saved successfully to file %s", loop_edges_path.c_str());
+    } else {
+      RCLCPP_ERROR(get_logger(), "Unable to open loop edges file %s for writing", loop_edges_path.c_str());
+    }
+  }
+}
+
+bool GraphBasedSlamComponent::loadSubmaps(lidarslam_msgs::msg::MapArray &submaps, std::vector<LoopEdge> &loop_edges) const
+{
+  {  // Submaps
+    std::string submaps_path = pose_graph_path_ + ".submaps";
+    std::ifstream file(submaps_path, std::ios::binary);
+    if (file.is_open()) {
+      // get length of file:
+      file.seekg(0, file.end);
+      int length = file.tellg();
+      file.seekg(0, file.beg);
+
+      // Allocate memory for the buffer
+      rcl_serialized_message_t rcl_msg = rmw_get_zero_initialized_serialized_message();
+      rcl_allocator_t allocator = rcl_get_default_allocator();
+      rmw_serialized_message_init(&rcl_msg, length, &allocator);
+      //std::memcpy(rcl_msg.buffer, str.data(), length);
+
+      // Set the size
+      rcl_msg.buffer_length = length;
+      //rcl_serialized_msg_2.buffer_length = file.end - file.beg;
+
+      //rcl_msg.buffer = new uint8_t[rcl_msg.buffer_length];
+      file.read(reinterpret_cast<char *>(rcl_msg.buffer), rcl_msg.buffer_length);
+      file.close();
+
+      RCLCPP_DEBUG(get_logger(), "Submaps file read successfully!");
+
+      RCLCPP_DEBUG(get_logger(), "de-serializing message");
+      const rclcpp::SerializedMessage serialized_message(rcl_msg);
+      rclcpp::Serialization<lidarslam_msgs::msg::MapArray> serializer = rclcpp::Serialization<lidarslam_msgs::msg::MapArray>();
+      serializer.deserialize_message(&serialized_message, &submaps);
+      RCLCPP_DEBUG(get_logger(), "message de-serialized");
+
+      RCLCPP_INFO(get_logger(), "Loaded submaps from file %s", submaps_path.c_str());
+    } else {
+      RCLCPP_ERROR(get_logger(), "Unable to open submaps file %s", submaps_path.c_str());
+      return false;
+    }
+  }
+  // make all submaps loop-closable to new trajectory (by setting their distance to at least -(distance_loop_closure_ + 1.0))
+  double max_distance = -std::numeric_limits<double>::infinity();
+  for (auto &submap : submaps.submaps)
+    max_distance = std::max(max_distance, submap.distance);
+  for (auto &submap : submaps.submaps)
+    submap.distance -= max_distance + distance_loop_closure_ + 1.0;
+
+  {  // Loop edges
+    std::string loop_edges_path = pose_graph_path_ + ".loop_edges";
+    std::ifstream file(loop_edges_path, std::ios::binary);
+    if (file.is_open()) {
+      // get length of file:
+      file.seekg(0, file.end);
+      int length = file.tellg();
+      file.seekg(0, file.beg);
+
+      // Allocate memory for the buffer
+      loop_edges.resize(length/sizeof(LoopEdge));
+      file.read(reinterpret_cast<char *>(loop_edges.data()), length);
+      file.close();
+
+      RCLCPP_INFO(get_logger(), "Loaded loop edges from file %s", loop_edges_path.c_str());
+    } else {
+      RCLCPP_ERROR(get_logger(), "Unable to open loop edges file %s", loop_edges_path.c_str());
+      return false;
+    }
+  }
+  return true;
+}
 }
 
 #include <rclcpp_components/register_node_macro.hpp>

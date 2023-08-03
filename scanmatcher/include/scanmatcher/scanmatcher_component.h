@@ -46,6 +46,7 @@ extern "C" {
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_listener.h>
 #include <tf2_ros/transform_broadcaster.h>
+#include <tf2_ros/static_transform_broadcaster.h>
 #include <tf2_sensor_msgs/tf2_sensor_msgs.hpp>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 #include <tf2_eigen/tf2_eigen.hpp>
@@ -99,6 +100,7 @@ private:
     tf2_ros::Buffer::SharedPtr tfbuffer_;
     std::shared_ptr<tf2_ros::TransformListener> listener_;
     std::shared_ptr<tf2_ros::TransformBroadcaster> broadcaster_;
+    std::shared_ptr<tf2_ros::StaticTransformBroadcaster> paused_broadcaster_;
 
     std::string global_frame_id_;
     std::string robot_frame_id_;

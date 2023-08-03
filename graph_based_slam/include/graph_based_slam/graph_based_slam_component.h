@@ -94,6 +94,12 @@ namespace graphslam
   class GraphBasedSlamComponent: public rtv_lifecycle::LifecycleNode
   {
     typedef rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn LifecycleCallbackReturn;
+    struct LoopEdge
+    {
+      std::pair < int, int > pair_id;
+      Eigen::Isometry3d relative_pose;
+    };
+
 public:
     GS_GBS_PUBLIC
     explicit GraphBasedSlamComponent(const rclcpp::NodeOptions & options);
@@ -127,6 +133,8 @@ private:
     void searchLoop();
     void doPoseAdjustment(lidarslam_msgs::msg::MapArray map_array_msg, bool do_save_map);
     void publishMapAndPose();
+    void saveSubmaps(const lidarslam_msgs::msg::MapArray &submaps, const std::vector<LoopEdge> &loop_edges) const;
+    bool loadSubmaps(lidarslam_msgs::msg::MapArray &submaps, std::vector<LoopEdge> &loop_edges) const;
 
     // loop search parameter
     int loop_detection_period_;
@@ -139,15 +147,11 @@ private:
     int num_adjacent_pose_cnstraints_;
     bool use_save_map_in_loop_ {true};
 
+    std::string pose_graph_path_;
     bool initial_map_array_received_ {false};
     bool is_map_array_updated_ {false};
     int previous_submaps_num_ {0};
 
-    struct LoopEdge
-    {
-      std::pair < int, int > pair_id;
-      Eigen::Isometry3d relative_pose;
-    };
     std::vector < LoopEdge > loop_edges_;
 
   };

@@ -46,7 +46,7 @@ ScanMatcherComponent::LifecycleCallbackReturn ScanMatcherComponent::on_configure
       get_node_base_interface(), get_node_timers_interface());
   tfbuffer_->setCreateTimerInterface(timer_interface);
   listener_ = std::make_shared<tf2_ros::TransformListener>(*tfbuffer_);
-  broadcaster_ = std::make_shared<tf2_ros::TransformBroadcaster>(this);
+  paused_broadcaster_ = std::make_shared<tf2_ros::StaticTransformBroadcaster>(this);
 
   std::string registration_method;
   double ndt_resolution;
@@ -144,11 +144,57 @@ ScanMatcherComponent::LifecycleCallbackReturn ScanMatcherComponent::on_configure
     msg->pose.orientation.z = initial_pose_qz_;
     msg->pose.orientation.w = initial_pose_qw_;
     corrent_pose_stamped_ = *msg;
+    pose_pub_->on_activate();
     pose_pub_->publish(corrent_pose_stamped_);
+    pose_pub_->on_deactivate();
     initial_pose_received_ = true;
 
     path_.poses.push_back(*msg);
   }
+
+  auto initial_pose_callback =
+      [this](const typename geometry_msgs::msg::PoseStamped::SharedPtr msg) -> void
+      {
+        if (msg->header.frame_id != global_frame_id_) {
+          RCLCPP_WARN(get_logger(), "This initial_pose is not in the global frame");
+          return;
+        }
+        RCLCPP_INFO(get_logger(), "initial_pose is received");
+
+        corrent_pose_stamped_ = *msg;
+        previous_position_.x() = corrent_pose_stamped_.pose.position.x;
+        previous_position_.y() = corrent_pose_stamped_.pose.position.y;
+        previous_position_.z() = corrent_pose_stamped_.pose.position.z;
+        initial_pose_received_ = true;
+
+        bool is_activated = pose_pub_->is_activated();
+        if (!is_activated)
+          pose_pub_->on_activate();
+        pose_pub_->publish(corrent_pose_stamped_);
+        if (!is_activated)
+          pose_pub_->on_deactivate();
+
+        tf2::Transform transform;
+        tf2::fromMsg(corrent_pose_stamped_.pose, transform);
+        geometry_msgs::msg::TransformStamped transform_stamped;
+        transform_stamped.header.stamp = msg->header.stamp;
+        transform_stamped.header.frame_id = robot_frame_id_;
+        transform_stamped.child_frame_id = global_frame_id_;
+        transform_stamped.transform = tf2::toMsg(transform.inverse());
+        if (is_activated)
+          broadcaster_->sendTransform(transform_stamped);
+        else
+          paused_broadcaster_->sendTransform(transform_stamped);
+      };
+
+  initial_pose_sub_ =
+      create_subscription<geometry_msgs::msg::PoseStamped>(
+          "initial_pose", rclcpp::QoS(1), initial_pose_callback);
+
+  geometry_msgs::msg::TransformStamped transform_stamped;
+  transform_stamped.header.frame_id = robot_frame_id_;
+  transform_stamped.child_frame_id = global_frame_id_;
+  paused_broadcaster_->sendTransform(transform_stamped);
 
   RCLCPP_INFO(get_logger(), "initialization end");
 
@@ -156,6 +202,8 @@ ScanMatcherComponent::LifecycleCallbackReturn ScanMatcherComponent::on_configure
 }
 
 ScanMatcherComponent::LifecycleCallbackReturn ScanMatcherComponent::on_activate(const rclcpp_lifecycle::State &) {
+  paused_broadcaster_.reset();  // forget static transforms
+  broadcaster_ = std::make_shared<tf2_ros::TransformBroadcaster>(this);
   initializeSub();
 
   pose_pub_->on_activate();
@@ -177,6 +225,8 @@ ScanMatcherComponent::LifecycleCallbackReturn ScanMatcherComponent::on_deactivat
   map_array_pub_->on_deactivate();
   path_pub_->on_deactivate();
   odom_pub_->on_deactivate();
+
+  paused_broadcaster_ = std::make_shared<tf2_ros::StaticTransformBroadcaster>(this);
 
   destroyBond();
   return LifecycleCallbackReturn::SUCCESS;
@@ -225,24 +275,6 @@ void ScanMatcherComponent::initializeSub()
 {
   RCLCPP_INFO(get_logger(), "initialize Subscribers");
   // sub
-  auto initial_pose_callback =
-    [this](const typename geometry_msgs::msg::PoseStamped::SharedPtr msg) -> void
-    {
-      if (msg->header.frame_id != global_frame_id_) {
-        RCLCPP_WARN(get_logger(), "This initial_pose is not in the global frame");
-        return;
-      }
-      RCLCPP_INFO(get_logger(), "initial_pose is received");
-
-      corrent_pose_stamped_ = *msg;
-      previous_position_.x() = corrent_pose_stamped_.pose.position.x;
-      previous_position_.y() = corrent_pose_stamped_.pose.position.y;
-      previous_position_.z() = corrent_pose_stamped_.pose.position.z;
-      initial_pose_received_ = true;
-
-      pose_pub_->publish(corrent_pose_stamped_);
-    };
-
   auto cloud_callback =
     [this](const typename sensor_msgs::msg::PointCloud2::SharedPtr msg) -> void
     {
@@ -322,10 +354,6 @@ void ScanMatcherComponent::initializeSub()
       if (initial_pose_received_) {receiveOdom(*msg);}
     };
 
-
-  initial_pose_sub_ =
-    create_subscription<geometry_msgs::msg::PoseStamped>(
-    "initial_pose", rclcpp::QoS(1), initial_pose_callback);
 
   odom_sub_ =
     create_subscription<nav_msgs::msg::Odometry>(
