@@ -241,30 +241,27 @@ void GraphBasedSlamComponent::initializeSub()
       size_t existing_submaps_cnt = map_array_msg_.submaps.size();
       map_array_msg_.submaps.insert(map_array_msg_.submaps.end(), msg_ptr->submaps.begin() + (existing_submaps_cnt - loaded_submaps_cnt_), msg_ptr->submaps.end());
 
-      // break adjacency between stored map and current map
-      if (!msg_ptr->submaps.empty()) {
-        auto &submap = map_array_msg_.submaps[loaded_submaps_cnt_];
-        if (existing_submaps_cnt == loaded_submaps_cnt_) {
-          // storing first pose as adjacency_transform to be able to reconstruct original poses if needed in future
+      // assign adjacency transform and adjust poses based on currently optimized graph
+      for (size_t i = existing_submaps_cnt; i < map_array_msg_.submaps.size(); i++) {
+        auto &submap = map_array_msg_.submaps[i];
+        if (std::isfinite(submap.adjacency_transform.rotation.w)) {  // no adjacency breakage requested
+          size_t msg_i = i - loaded_submaps_cnt_;
+          Eigen::Isometry3d prev_pose, cur_pose, prev_pose_map, adjac_trans;
+          tf2::fromMsg(msg_ptr->submaps[msg_i - 1].pose, prev_pose);
+          tf2::fromMsg(submap.pose, cur_pose);
+          tf2::fromMsg(map_array_msg_.submaps[i - 1].pose, prev_pose_map);
+          adjac_trans = prev_pose.inverse()*cur_pose;
+          submap.adjacency_transform = tf2::eigenToTransform(adjac_trans).transform;
+          submap.pose = tf2::toMsg(prev_pose_map*adjac_trans);
+        }
+        else {  // break adjacency between previous and current submap
+          // storing first pose as adjacency_transform to be able to reconstruct original poses (for visualization etc.)
           Eigen::Isometry3d pose;
           tf2::fromMsg(submap.pose, pose);
           submap.adjacency_transform = tf2::eigenToTransform(pose).transform;
+          auto &w = submap.adjacency_transform.rotation.w;
+          w = std::numeric_limits<double>::infinity() * (w >= 0 ? 1 : -1);  // storing sign to be able to reconstruct original value (||rot|| = 1)
         }
-        auto &w = submap.adjacency_transform.rotation.w;
-        w = std::numeric_limits<double>::infinity() * (w >= 0 ? 1 : -1);  // storing sign to be able to reconstruct original value (||rot|| = 1)
-      }
-
-      // assign adjacency transform and adjust poses based on currently optimized graph
-      for (size_t i = std::max(loaded_submaps_cnt_ + 1, existing_submaps_cnt); i < map_array_msg_.submaps.size(); i++) {
-        auto &submap = map_array_msg_.submaps[i];
-        size_t msg_i = i - loaded_submaps_cnt_;
-        Eigen::Isometry3d prev_pose, cur_pose, prev_pose_map, adjac_trans;
-        tf2::fromMsg(msg_ptr->submaps[msg_i - 1].pose, prev_pose);
-        tf2::fromMsg(submap.pose, cur_pose);
-        tf2::fromMsg(map_array_msg_.submaps[i - 1].pose, prev_pose_map);
-        adjac_trans = prev_pose.inverse()*cur_pose;
-        submap.adjacency_transform = tf2::eigenToTransform(adjac_trans).transform;
-        submap.pose = tf2::toMsg(prev_pose_map*adjac_trans);
       }
       initial_map_array_received_ = true;
       is_map_array_updated_ = true;

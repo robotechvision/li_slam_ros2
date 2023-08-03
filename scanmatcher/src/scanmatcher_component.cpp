@@ -167,6 +167,7 @@ ScanMatcherComponent::LifecycleCallbackReturn ScanMatcherComponent::on_configure
         previous_position_.y() = corrent_pose_stamped_.pose.position.y;
         previous_position_.z() = corrent_pose_stamped_.pose.position.z;
         initial_pose_received_ = true;
+        initial_cloud_received_ = false;
 
         bool is_activated = pose_pub_->is_activated();
         if (!is_activated)
@@ -333,6 +334,7 @@ void ScanMatcherComponent::initializeSub()
           submap.header = msg->header;
           submap.distance = 0;
           submap.pose = corrent_pose_stamped_.pose;
+          submap.adjacency_transform.rotation.w = std::numeric_limits<double>::infinity();  // break adjacency to previous submap
           submap.cloud = *cloud_msg_ptr;
           map_array_msg_.header = msg->header;
           map_array_msg_.submaps.push_back(submap);

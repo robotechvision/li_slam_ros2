@@ -34,7 +34,7 @@ scan_matcher:
       use_min_max_filter: false
       map_publish_period: 100.0
       num_targeted_cloud: 20
-      set_initial_pose: true
+      set_initial_pose: false
       initial_pose_x: 0.0
       initial_pose_y: 0.0
       initial_pose_z: 0.0
