@@ -3,6 +3,7 @@
 #include "tf2_ros/create_timer_ros.h"
 #include "rclcpp/serialization.hpp"
 #include "fast_gicp/gicp/fast_gicp.hpp"
+#include "fast_gicp/gicp/fast_vgicp.hpp"
 
 using namespace std::chrono_literals;
 
@@ -15,6 +16,7 @@ GraphBasedSlamComponent::GraphBasedSlamComponent(const rclcpp::NodeOptions & opt
 
   declare_parameter("registration_method", "NDT");
   declare_parameter("voxel_leaf_size", 0.2);
+  declare_parameter("vgicp_resolution", 0.15);
   declare_parameter("ndt_resolution", 5.0);
   declare_parameter("ndt_num_threads", 0);
   declare_parameter("loop_detection_period", 1000);
@@ -44,6 +46,7 @@ GraphBasedSlamComponent::LifecycleCallbackReturn GraphBasedSlamComponent::on_con
 
   std::string registration_method;
   double voxel_leaf_size;
+  double vgicp_resolution;
   double ndt_resolution;
   int ndt_num_threads;
   double rotaton_epsilon;
@@ -53,6 +56,7 @@ GraphBasedSlamComponent::LifecycleCallbackReturn GraphBasedSlamComponent::on_con
 
   get_parameter("registration_method", registration_method);
   get_parameter("voxel_leaf_size", voxel_leaf_size);
+  get_parameter("vgicp_resolution", vgicp_resolution);
   get_parameter("ndt_resolution", ndt_resolution);
   get_parameter("ndt_num_threads", ndt_num_threads);
   get_parameter("loop_detection_period", loop_detection_period_);
@@ -112,11 +116,23 @@ GraphBasedSlamComponent::LifecycleCallbackReturn GraphBasedSlamComponent::on_con
   } else if (registration_method == "FastGICP") {
     boost::shared_ptr<fast_gicp::FastGICP<pcl::PointXYZI, pcl::PointXYZI>>
         gicp(new fast_gicp::FastGICP<pcl::PointXYZI, pcl::PointXYZI>());
+    // gicp->setDebugPrint(true);
     gicp->setNumThreads(num_threads);
-    gicp->setDebugPrint(true);
     gicp->setTransformationEpsilon(transformation_epsilon);  //
     gicp->setMaximumIterations(max_num_iterations);
     gicp->setRANSACIterations(50);
+    //gicp->setMaxCorrespondenceDistance(20);
+    registration_ = gicp;
+  } else if (registration_method == "FastVGICP") {
+    boost::shared_ptr<fast_gicp::FastVGICP<pcl::PointXYZI, pcl::PointXYZI>>
+        gicp(new fast_gicp::FastVGICP<pcl::PointXYZI, pcl::PointXYZI>());
+    // gicp->setDebugPrint(true);
+    gicp->setNumThreads(num_threads);
+    gicp->setTransformationEpsilon(transformation_epsilon);  //
+    gicp->setMaximumIterations(max_num_iterations);
+    gicp->setRANSACIterations(50);
+    gicp->setNeighborSearchMethod(fast_gicp::NeighborSearchMethod::DIRECT7);
+    gicp->setResolution(vgicp_resolution);
     //gicp->setMaxCorrespondenceDistance(20);
     registration_ = gicp;
   } else {
@@ -332,7 +348,7 @@ void GraphBasedSlamComponent::searchLoop()
   double distance_min_fitness_score = 0;
   bool is_candidate = false;
 
-  pcl::console::setVerbosityLevel(pcl::console::VERBOSITY_LEVEL::L_VERBOSE);
+  // pcl::console::setVerbosityLevel(pcl::console::VERBOSITY_LEVEL::L_VERBOSE);
   const lidarslam_msgs::msg::SubMap &latest_submap = map_array_msg.submaps[num_submaps - 1];
   Eigen::Affine3d latest_submap_affine;
   tf2::fromMsg(latest_submap.pose, latest_submap_affine);
@@ -396,7 +412,7 @@ void GraphBasedSlamComponent::searchLoop()
 
       Eigen::Isometry3d registration_trans(registration_->getFinalTransformation().cast<double>());
 
-      if (registration_->hasConverged() && fitness_score < threshold_loop_closure_score_) {
+      if (/*registration_->hasConverged() && */fitness_score < threshold_loop_closure_score_) {
 
         Eigen::Affine3d reference_affine;
         tf2::fromMsg(min_submap->pose, reference_affine);
@@ -598,7 +614,6 @@ void GraphBasedSlamComponent::doPoseAdjustment(
     *map_ptr += *transformed_cloud_ptr;
 
     /* submap */
-    auto &submap = map_array_msg.submaps[i];
     submap.pose = pose;
 
     /* path */

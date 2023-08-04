@@ -50,14 +50,15 @@ graph_based_slam:
     ros__parameters:
       registration_method: "FastGICP"
       rotation_epsilon: 2e-3
-      transformation_epsilon: 5e-4
+      transformation_epsilon: 1e-7
       num_threads: 10
       max_num_iterations: 256
       ndt_resolution: 5.0
       ndt_num_threads: 1
       voxel_leaf_size: 0.1
+      vgicp_resolution: 0.15
       loop_detection_period: 3000
-      threshold_loop_closure_score: 1.0
+      threshold_loop_closure_score: 0.18
       distance_loop_closure: 20.0
       range_of_searching_loop_closure: 4.0
       search_submap_num: 4
