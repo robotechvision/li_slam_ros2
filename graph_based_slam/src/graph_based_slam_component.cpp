@@ -515,10 +515,11 @@ void GraphBasedSlamComponent::doPoseAdjustment(
     g2o::VertexSE3 * vertex_se3 = new g2o::VertexSE3();
     vertex_se3->setId(i);
     vertex_se3->setEstimate(pose);
-    if (i == 0 || (loaded_map_static_ && i < loaded_submaps_cnt_)) {vertex_se3->setFixed(true);}
+    bool fixed = i == 0 || (loaded_map_static_ && i < loaded_submaps_cnt_);
+    if (fixed) {vertex_se3->setFixed(true);}
     optimizer.addVertex(vertex_se3);
 
-    if (std::isfinite(map_array_msg.submaps[i].adjacency_transform.rotation.w)) {
+    if (!fixed && std::isfinite(map_array_msg.submaps[i].adjacency_transform.rotation.w)) {
       Eigen::Isometry3d relative_pose = Eigen::Isometry3d::Identity();
       for (int j = i - 1; j >= i - num_adjacent_pose_cnstraints_; j--) {
         Eigen::Isometry3d adjacency_trans;
@@ -541,6 +542,8 @@ void GraphBasedSlamComponent::doPoseAdjustment(
   }
   /* loop edge */
   for (auto loop_edge : loop_edges_) {
+    if (loaded_map_static_ && loop_edge.pair_id.first < loaded_submaps_cnt_ && loop_edge.pair_id.second < loaded_submaps_cnt_)
+      continue;  // we don't need edges between fixed vertices
     g2o::EdgeSE3 * edge_se3 = new g2o::EdgeSE3();
     edge_se3->setMeasurement(loop_edge.relative_pose);
     edge_se3->setInformation(info_mat);
@@ -570,9 +573,18 @@ void GraphBasedSlamComponent::doPoseAdjustment(
   path.header.frame_id = map_frame_id_;
   pcl::PointCloud<pcl::PointXYZI>::Ptr map_ptr(new pcl::PointCloud<pcl::PointXYZI>());
   for (int i = 0; i < submaps_size; i++) {
-    g2o::VertexSE3 * vertex_se3 = static_cast<g2o::VertexSE3 *>(optimizer.vertex(i));
-    Eigen::Affine3d se3 = vertex_se3->estimate();
-    geometry_msgs::msg::Pose pose = tf2::toMsg(se3);
+    auto &submap = map_array_msg.submaps[i];
+    Eigen::Affine3d se3;
+    geometry_msgs::msg::Pose pose;
+    if (i == 0 || (loaded_map_static_ && i < loaded_submaps_cnt_)) {
+      pose = submap.pose;  // prevent accumulation of orientation errors due to conversion of quaternion to rotation matrix and back
+      Eigen::fromMsg(pose, se3);
+    }
+    else {
+      g2o::VertexSE3 *vertex_se3 = static_cast<g2o::VertexSE3 *>(optimizer.vertex(i));
+      se3 = vertex_se3->estimate();
+      pose = tf2::toMsg(se3);
+    }
 
     /* map */
     pcl::PointCloud<pcl::PointXYZI>::Ptr cloud_ptr(new pcl::PointCloud<pcl::PointXYZI>());
