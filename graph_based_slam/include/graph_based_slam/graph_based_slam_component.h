@@ -45,7 +45,7 @@ extern "C" {
 
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_listener.h>
-#include <tf2_ros/transform_broadcaster.h>
+#include <tf2_ros/static_transform_broadcaster.h>
 #include <tf2_sensor_msgs/tf2_sensor_msgs.hpp>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 #include <tf2_eigen/tf2_eigen.hpp>
@@ -115,13 +115,14 @@ namespace graphslam
     // rclcpp::Clock clock_;
     tf2_ros::Buffer::SharedPtr tfbuffer_;
     std::shared_ptr<tf2_ros::TransformListener> listener_;
-    std::shared_ptr<tf2_ros::TransformBroadcaster> broadcaster_;
+    std::shared_ptr<tf2_ros::StaticTransformBroadcaster> broadcaster_;
 
     boost::shared_ptr<pcl::Registration < pcl::PointXYZI, pcl::PointXYZI >> registration_;
     pcl::VoxelGrid < pcl::PointXYZI > voxelgrid_;
 
     lidarslam_msgs::msg::MapArray map_array_msg_;
     rclcpp::Subscription < lidarslam_msgs::msg::MapArray > ::SharedPtr map_array_sub_;
+    rclcpp::Subscription < geometry_msgs::msg::PoseStamped > ::SharedPtr initial_pose_sub_;
     rclcpp_lifecycle::LifecyclePublisher < lidarslam_msgs::msg::MapArray > ::SharedPtr modified_map_array_pub_;
     rclcpp_lifecycle::LifecyclePublisher < nav_msgs::msg::Path > ::SharedPtr input_path_pub_;
     rclcpp_lifecycle::LifecyclePublisher < nav_msgs::msg::Path > ::SharedPtr modified_path_pub_;
@@ -145,6 +146,8 @@ namespace graphslam
     double distance_loop_closure_;
     double range_of_searching_loop_closure_;
     int search_submap_num_;
+    std::string loam_frame_id_;
+    std::string map_frame_id_;
 
     // pose graph optimization parameter
     int num_adjacent_pose_cnstraints_;

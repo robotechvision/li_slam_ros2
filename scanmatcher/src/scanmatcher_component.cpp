@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include "tf2_ros/create_timer_ros.h"
+#include "tf2_eigen/tf2_eigen.hpp"
 
 using namespace std::chrono_literals;
 
@@ -10,7 +11,8 @@ namespace graphslam
 ScanMatcherComponent::ScanMatcherComponent(const rclcpp::NodeOptions & options)
 : rtv_lifecycle::LifecycleNode("scan_matcher", "", false, options)
 {
-  declare_parameter("global_frame_id", "map");
+  declare_parameter("map_frame_id", "map");
+  declare_parameter("global_frame_id", "laser_odom");
   declare_parameter("robot_frame_id", "base_link");
   declare_parameter("odom_frame_id", "odom");
   declare_parameter("registration_method", "NDT");
@@ -53,6 +55,7 @@ ScanMatcherComponent::LifecycleCallbackReturn ScanMatcherComponent::on_configure
   int ndt_num_threads;
   double gicp_corr_dist_threshold;
 
+  get_parameter("map_frame_id", map_frame_id_);
   get_parameter("global_frame_id", global_frame_id_);
   get_parameter("robot_frame_id", robot_frame_id_);
   get_parameter("odom_frame_id", odom_frame_id_);
@@ -156,13 +159,14 @@ ScanMatcherComponent::LifecycleCallbackReturn ScanMatcherComponent::on_configure
   auto initial_pose_callback =
       [this](const typename geometry_msgs::msg::PoseStamped::SharedPtr msg) -> void
       {
-        if (msg->header.frame_id != global_frame_id_) {
+        if (msg->header.frame_id != global_frame_id_ && msg->header.frame_id != map_frame_id_) {
           RCLCPP_WARN(get_logger(), "This initial_pose is not in the global frame");
           return;
         }
         RCLCPP_INFO(get_logger(), "initial_pose is received");
 
         corrent_pose_stamped_ = *msg;
+        corrent_pose_stamped_.header.frame_id = global_frame_id_;
         previous_position_.x() = corrent_pose_stamped_.pose.position.x;
         previous_position_.y() = corrent_pose_stamped_.pose.position.y;
         previous_position_.z() = corrent_pose_stamped_.pose.position.z;
@@ -228,6 +232,7 @@ ScanMatcherComponent::LifecycleCallbackReturn ScanMatcherComponent::on_deactivat
   path_pub_->on_deactivate();
   odom_pub_->on_deactivate();
 
+  broadcaster_.reset();
   paused_broadcaster_ = std::make_shared<tf2_ros::StaticTransformBroadcaster>(this);
 
   destroyBond();
@@ -243,7 +248,7 @@ ScanMatcherComponent::LifecycleCallbackReturn ScanMatcherComponent::on_cleanup(c
   path_pub_.reset();
   odom_pub_.reset();
 
-  broadcaster_.reset();
+  paused_broadcaster_.reset();
   listener_.reset();
   tfbuffer_.reset();
   return LifecycleCallbackReturn::SUCCESS;

@@ -30,6 +30,8 @@ GraphBasedSlamComponent::GraphBasedSlamComponent(const rclcpp::NodeOptions & opt
   declare_parameter("transformation_epsilon", 5e-4);
   declare_parameter("max_num_iterations", 64);
   declare_parameter("num_threads", 10);
+  declare_parameter("loam_frame_id", "laser_odom");
+  declare_parameter("map_frame_id", "map");
 }
 
 GraphBasedSlamComponent::LifecycleCallbackReturn GraphBasedSlamComponent::on_configure(const rclcpp_lifecycle::State &) {
@@ -38,7 +40,7 @@ GraphBasedSlamComponent::LifecycleCallbackReturn GraphBasedSlamComponent::on_con
       get_node_base_interface(), get_node_timers_interface());
   tfbuffer_->setCreateTimerInterface(timer_interface);
   listener_ = std::make_shared<tf2_ros::TransformListener>(*tfbuffer_);
-  broadcaster_ = std::make_shared<tf2_ros::TransformBroadcaster>(this);
+  broadcaster_ = std::make_shared<tf2_ros::StaticTransformBroadcaster>(this);
 
   std::string registration_method;
   double voxel_leaf_size;
@@ -66,6 +68,8 @@ GraphBasedSlamComponent::LifecycleCallbackReturn GraphBasedSlamComponent::on_con
   get_parameter("transformation_epsilon", transformation_epsilon);
   get_parameter("max_num_iterations", max_num_iterations);
   get_parameter("num_threads", num_threads);
+  get_parameter("loam_frame_id", loam_frame_id_);
+  get_parameter("map_frame_id", map_frame_id_);
 
   std::cout << "registration_method:" << registration_method << std::endl;
   std::cout << "voxel_leaf_size[m]:" << voxel_leaf_size << std::endl;
@@ -151,6 +155,34 @@ GraphBasedSlamComponent::LifecycleCallbackReturn GraphBasedSlamComponent::on_con
     };
 
   map_save_srv_ = create_service<std_srvs::srv::Empty>("map_save", map_save_callback);
+
+  // publish zero transform between loam and map frame
+  geometry_msgs::msg::TransformStamped transform_stamped;
+  transform_stamped.header.frame_id = loam_frame_id_;
+  transform_stamped.child_frame_id = map_frame_id_;
+  broadcaster_->sendTransform(transform_stamped);
+
+  auto initial_pose_callback =
+      [this](const typename geometry_msgs::msg::PoseStamped::SharedPtr msg) -> void
+      {
+        if (msg->header.frame_id != loam_frame_id_ && msg->header.frame_id != map_frame_id_) {
+          RCLCPP_WARN(get_logger(), "This initial_pose is not in the global frame");
+          return;
+        }
+        RCLCPP_INFO(get_logger(), "initial_pose is received");
+
+        // reset global transform to display initial pose correctly, although it will be set in loam frame by scanmatcher node
+        if (msg->header.frame_id == map_frame_id_) {
+          geometry_msgs::msg::TransformStamped transform_stamped;
+          transform_stamped.header.frame_id = loam_frame_id_;
+          transform_stamped.child_frame_id = map_frame_id_;
+          broadcaster_->sendTransform(transform_stamped);
+        }
+      };
+
+  initial_pose_sub_ =
+      create_subscription<geometry_msgs::msg::PoseStamped>(
+          "initial_pose", rclcpp::QoS(1), initial_pose_callback);
 
   return LifecycleCallbackReturn::SUCCESS;
 }
@@ -404,7 +436,7 @@ void GraphBasedSlamComponent::searchLoop()
     *registration_clouds_ptr += *latest_submap_cloud_ptr;
     sensor_msgs::msg::PointCloud2 registration_clouds_msg;
     pcl::toROSMsg(*registration_clouds_ptr, registration_clouds_msg);
-    registration_clouds_msg.header.frame_id = "map";
+    registration_clouds_msg.header.frame_id = map_frame_id_;
     registration_pub_->publish(registration_clouds_msg);
 
     std::cout << "-" << std::endl;
@@ -414,8 +446,8 @@ void GraphBasedSlamComponent::searchLoop()
 
   nav_msgs::msg::Path path;
   nav_msgs::msg::Path modified_path;
-  path.header.frame_id = "map";
-  modified_path.header.frame_id = "map";
+  path.header.frame_id = map_frame_id_;
+  modified_path.header.frame_id = map_frame_id_;
   Eigen::Isometry3d submap_pose = Eigen::Isometry3d::Identity();
   for (int i = 0; i < num_submaps; i++) {
     /* path */
@@ -442,6 +474,19 @@ void GraphBasedSlamComponent::searchLoop()
     pose_stamped.pose = submap.pose;
     modified_path.poses.push_back(pose_stamped);
   }
+  if (num_submaps > 0) {
+    Eigen::Isometry3d modified_submap_pose;
+    tf2::fromMsg(modified_path.poses.back().pose, modified_submap_pose);
+    Eigen::Isometry3d map_loam_trans = modified_submap_pose*submap_pose.inverse();
+
+    // publish zero transform between loam and map frame
+    geometry_msgs::msg::TransformStamped transform_stamped;
+    transform_stamped.header.frame_id = loam_frame_id_;
+    transform_stamped.child_frame_id = map_frame_id_;
+    transform_stamped.transform = tf2::eigenToTransform(map_loam_trans.inverse()).transform;
+    broadcaster_->sendTransform(transform_stamped);
+  }
+
   input_path_pub_->publish(path);
   modified_path_pub_->publish(modified_path);
 }
@@ -522,7 +567,7 @@ void GraphBasedSlamComponent::doPoseAdjustment(
   /* modified_map publish */
   std::cout << "modified_map publish" << std::endl;
   nav_msgs::msg::Path path;
-  path.header.frame_id = "map";
+  path.header.frame_id = map_frame_id_;
   pcl::PointCloud<pcl::PointXYZI>::Ptr map_ptr(new pcl::PointCloud<pcl::PointXYZI>());
   for (int i = 0; i < submaps_size; i++) {
     g2o::VertexSE3 * vertex_se3 = static_cast<g2o::VertexSE3 *>(optimizer.vertex(i));
@@ -558,7 +603,7 @@ void GraphBasedSlamComponent::doPoseAdjustment(
 
   sensor_msgs::msg::PointCloud2::SharedPtr map_msg_ptr(new sensor_msgs::msg::PointCloud2);
   pcl::toROSMsg(*map_ptr, *map_msg_ptr);
-  map_msg_ptr->header.frame_id = "map";
+  map_msg_ptr->header.frame_id = map_frame_id_;
   modified_map_pub_->publish(*map_msg_ptr);
   if (do_save_map) {
     pcl::io::savePCDFileASCII("map.pcd", *map_ptr); // too heavy

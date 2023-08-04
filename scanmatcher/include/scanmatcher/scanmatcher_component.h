@@ -102,6 +102,7 @@ private:
     std::shared_ptr<tf2_ros::TransformBroadcaster> broadcaster_;
     std::shared_ptr<tf2_ros::StaticTransformBroadcaster> paused_broadcaster_;
 
+    std::string map_frame_id_;
     std::string global_frame_id_;
     std::string robot_frame_id_;
     std::string odom_frame_id_;
